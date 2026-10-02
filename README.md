@@ -36,6 +36,7 @@
       <a href="#about-the-project">About The Project</a>
       <ul>
         <li><a href="#built-with">Built With</a></li>
+        <li><a href="#services-and-data-sources">Services & Data Sources</a></li>
       </ul>
     </li>
     <li>
@@ -45,6 +46,8 @@
         <li><a href="#installation">Installation</a></li>
       </ul>
     </li>
+    <li><a href="#updating-card-data-punk-records">Updating Card Data (Punk Records)</a></li>
+    <li><a href="#license">License</a></li>
     <li><a href="#contact">Contact</a></li>
   </ol>
 </details>
@@ -68,6 +71,15 @@ Plataforma integral para coleccionistas y jugadores de One Piece Card Game (OP-T
 * [![Postgresql][Postgresql]][Postgresql-url]
 * [![OpenCV][OpenCV]][OpenCV-url]
 * [![Vercel][Vercel]][Vercel-url]
+
+<p align="right">(<a href="#readme-top">volver al principio</a>)</p>
+
+### Services and Data Sources
+
+* **[Punk Records](https://github.com/buhbbl/punk-records)**: Dataset estructurado y versionado de cartas, sets y traducciones oficiales (inglés y japonés) de One Piece TCG, generado mediante `vegapull`.
+* **[OPTCG API](https://optcgapi.com)**: Servicio gratuito utilizado para obtener precios de mercado diarios sincronizados con TCGPlayer para cartas estándar, variantes alternas (`_p1`, `_p2`) y cartas promocionales.
+* **[Google Cloud Vision API](https://cloud.google.com/vision)**: Motor de visión artificial utilizado en el escáner para reconocimiento óptico de caracteres (OCR) sobre los códigos y nombres de las cartas físicas.
+* **[OpenCV.js](https://opencv.org)**: Motor de visión por computadora ejecutado localmente en el navegador vía WebAssembly. Utiliza el algoritmo **ORB (Oriented FAST and Rotated BRIEF)** y **BFMatcher** para comparar la ilustración de la carta capturada y determinar con precisión artes alternativos, cartas paralelas y mangas.
 
 <p align="right">(<a href="#readme-top">volver al principio</a>)</p>
 
@@ -123,6 +135,35 @@ Proyecto con frontend en React + TypeScript (Vite + Tailwind CSS), API serverles
      npm run dev:frontend
      ```
    Frontend disponible en `http://localhost:5173/` y API en `http://localhost:3000/api`.
+
+<p align="right">(<a href="#readme-top">volver al principio</a>)</p>
+
+<!-- UPDATING CARD DATA -->
+## Updating Card Data (Punk Records)
+
+Los datos de las cartas (imágenes oficiales, nombres en inglés/japonés, rarezas, tipos, efectos y expansiones) se gestionan mediante el dataset de **Punk Records**. Para mantener la base de datos de PostgreSQL actualizada con los nuevos sets y expansiones:
+
+1. **Clonar o actualizar Punk Records:**
+   - Si no tienes la carpeta descargada:
+     ```bash
+     mkdir -p data
+     git clone https://github.com/buhbbl/punk-records.git data/punk-records
+     ```
+   - Si ya tienes la carpeta clonada, actualiza los datos con:
+     ```bash
+     cd data/punk-records
+     git pull origin main
+     cd ../..
+     ```
+
+2. **Sincronizar las nuevas cartas en PostgreSQL (Neon):**
+   Asegúrate de tener configurada la variable `DATABASE_URL` en tu archivo `.env` y ejecuta el script de importación:
+   ```bash
+   npm run import
+   ```
+   El script procesará los archivos JSON de inglés (`english/`) y japonés (`japanese/`), insertando nuevas cartas, locales y expansiones sin duplicar los registros existentes.
+
+> **Nota:** La carpeta `data/punk-records/` se encuentra en el archivo `.gitignore` para evitar subir cientos de megabytes de datos estáticos al repositorio de GitHub o a Vercel. La actualización se ejecuta localmente contra la base de datos de Neon/PostgreSQL.
 
 <p align="right">(<a href="#readme-top">volver al principio</a>)</p>
 
