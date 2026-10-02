@@ -1,0 +1,12 @@
+node_modules/
+.env
+.env.local
+.env.*.local
+data/punk-records/
+api/db/*.sqlite
+api/db/*.sqlite-wal
+api/db/*.sqlite-shm
+dist/
+frontend/dist/
+.DS_Store
+*.log
