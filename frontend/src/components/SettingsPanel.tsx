@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useSettings } from '../context/SettingsContext'
 
 interface Props {
@@ -8,6 +8,10 @@ interface Props {
 export default function SettingsPanel({ onClose }: Props) {
   const { usdToMxn, setUsdToMxn, theme, setTheme } = useSettings()
   const [rateInput, setRateInput] = useState(String(usdToMxn))
+
+  useEffect(() => {
+    setRateInput(String(usdToMxn))
+  }, [usdToMxn])
 
   function handleRateBlur() {
     const val = parseFloat(rateInput)
@@ -31,7 +35,7 @@ export default function SettingsPanel({ onClose }: Props) {
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700">
           <h2 className="text-white font-bold text-lg flex items-center gap-2">
-            ⚙️ Ajustes
+            <span className="no-invert">⚙️</span> Ajustes
           </h2>
           <button
             onClick={onClose}
@@ -57,7 +61,7 @@ export default function SettingsPanel({ onClose }: Props) {
                   Tipo de cambio USD → MXN
                 </label>
                 <p className="text-xs text-slate-500 mb-3">
-                  Se usa para mostrar precios en pesos mexicanos.
+                  Referencia automática (open.er-api.com) o valor manual.
                 </p>
                 <div className="flex items-center gap-2">
                   <span className="text-slate-400 text-sm">$1 USD =</span>
@@ -73,7 +77,7 @@ export default function SettingsPanel({ onClose }: Props) {
                   <span className="text-slate-400 text-sm">MXN</span>
                 </div>
                 <p className="text-xs text-slate-600 mt-2">
-                  Valor actual: {usdToMxn.toFixed(2)} MXN por USD
+                  Valor actual en uso: {usdToMxn.toFixed(2)} MXN
                 </p>
               </div>
 
@@ -94,7 +98,7 @@ export default function SettingsPanel({ onClose }: Props) {
                         : 'bg-slate-700 text-slate-300 hover:text-white'
                     }`}
                   >
-                    🌙
+                    <span className="no-invert">🌙</span>
                   </button>
                   <button
                     onClick={() => setTheme('light')}
@@ -104,7 +108,7 @@ export default function SettingsPanel({ onClose }: Props) {
                         : 'bg-slate-700 text-slate-300 hover:text-white'
                     }`}
                   >
-                    ☀️
+                    <span className="no-invert">☀️</span>
                   </button>
                 </div>
               </div>

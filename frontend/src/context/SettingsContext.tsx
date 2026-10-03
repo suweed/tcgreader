@@ -35,6 +35,22 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   }
 
   useEffect(() => {
+    // Obtener tipo de cambio automáticamente en segundo plano
+    fetch('https://open.er-api.com/v6/latest/USD')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.rates && data.rates.MXN) {
+          const rate = data.rates.MXN
+          setUsdToMxnState(rate)
+          localStorage.setItem('usdToMxn', String(rate))
+        }
+      })
+      .catch((err) => {
+        console.warn('Error obteniendo el tipo de cambio:', err)
+      })
+  }, [])
+
+  useEffect(() => {
     const html = document.documentElement
     if (theme === 'light') {
       html.classList.add('light')

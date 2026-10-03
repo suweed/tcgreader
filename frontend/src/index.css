@@ -15,6 +15,7 @@ html.light {
 
 html.light img,
 html.light video,
-html.light [style*="background-image"] {
+html.light [style*="background-image"],
+html.light .no-invert {
   filter: invert(1) hue-rotate(180deg);
 }

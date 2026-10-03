@@ -26,7 +26,7 @@ export default function App() {
             className="text-slate-400 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-slate-700"
             title="Ajustes"
           >
-            ⚙️
+            <span className="no-invert">⚙️</span>
           </button>
         </header>
 
@@ -42,19 +42,19 @@ export default function App() {
         {/* Bottom Nav */}
         <nav className="fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-700 flex justify-around py-2 px-2 z-40">
           <NavLink to="/" end className={navClass}>
-            <span>📖</span>
+            <span className="no-invert">📖</span>
             <span>Álbum</span>
           </NavLink>
           <NavLink to="/collection" className={navClass}>
-            <span>🗂</span>
+            <span className="no-invert">🗂</span>
             <span>Colección</span>
           </NavLink>
           <NavLink to="/search" className={navClass}>
-            <span>🔍</span>
+            <span className="no-invert">🔍</span>
             <span>Buscar</span>
           </NavLink>
           <NavLink to="/scanner" className={navClass}>
-            <span>📷</span>
+            <span className="no-invert">📷</span>
             <span>Escáner</span>
           </NavLink>
         </nav>

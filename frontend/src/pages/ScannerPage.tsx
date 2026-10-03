@@ -31,12 +31,16 @@ interface DebugMatchInfo {
 // Proporciones exactas de cartas One Piece: 63 mm × 88 mm
 export const CARD_RATIO = 63 / 88 // 0.715909...
 
-export function getGuideRect(W: number, H: number, scale = 0.86) {
+export function getGuideRect(W: number, H: number, scale = 0.94) {
   let h = H * scale
   let w = h * CARD_RATIO
-  if (w > W * 0.92) {
-    w = W * 0.92
+  if (w > W * 0.94) {
+    w = W * 0.94
     h = w / CARD_RATIO
+  }
+  if (h > H * 0.96) {
+    h = H * 0.96
+    w = h * CARD_RATIO
   }
   const x = Math.round((W - w) / 2)
   const y = Math.round((H - h) / 2)
@@ -49,7 +53,7 @@ export function getGuideRect(W: number, H: number, scale = 0.86) {
 }
 
 // Mapeo exacto entre la pantalla del usuario (CSS object-cover) y los píxeles reales del sensor de video
-export function getVideoGuideRect(video: HTMLVideoElement, scale = 0.86) {
+export function getVideoGuideRect(video: HTMLVideoElement, scale = 0.94) {
   const W_disp = video.clientWidth || 360
   const H_disp = video.clientHeight || 480
   const W_vid = video.videoWidth || W_disp
@@ -325,7 +329,7 @@ function enhanceContrastZone(
   } catch {}
 }
 
-function captureZones(video: HTMLVideoElement, scale = 0.74): { textImg: string; artCanvas: HTMLCanvasElement } {
+function captureZones(video: HTMLVideoElement, scale = 0.94): { textImg: string; artCanvas: HTMLCanvasElement } {
   // Usar mapeo exacto de coordenadas de la pantalla a los píxeles reales del video
   const { videoGuide } = getVideoGuideRect(video, scale)
   const guide = videoGuide
@@ -437,9 +441,9 @@ export default function ScannerPage() {
   const loopActiveRef = useRef(false)
   const isScanningRef = useRef(false)
 
-  // Tamaño de marco fijo con proporción física One Piece (63 mm × 88 mm)
-  // Escala ampliada a 0.86 para acercar la carta a la lente y aumentar la resolución física del código en el sensor
-  const DEFAULT_CARD_SCALE = 0.86
+  // Tamaño de marco maximizado con proporción física One Piece (63 mm × 88 mm)
+  // Escala ampliada a 0.94 para acercar la carta al máximo a la lente y aumentar la resolución física del código en el sensor
+  const DEFAULT_CARD_SCALE = 0.94
 
   const [cameraKey, setCameraKey] = useState(0)
   const resultsRef = useRef<HTMLDivElement>(null)
