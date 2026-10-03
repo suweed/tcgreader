@@ -242,36 +242,68 @@ function enhanceContrastZone(
     const totalPixels = width * height
     if (totalPixels === 0) return
 
-    // 1. Muestreo de luminancia en escala de grises para análisis de sombra
-    const sampleStep = Math.max(1, Math.floor(totalPixels / 2000))
-    const lums: number[] = []
-    for (let i = 0; i < d.length; i += 4 * sampleStep) {
-      const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
-      lums.push(lum)
+    // 1. Extraer luminancia en escala de grises
+    const gray = new Float32Array(totalPixels)
+    for (let i = 0; i < totalPixels; i++) {
+      const idx = i * 4
+      gray[i] = 0.299 * d[idx] + 0.587 * d[idx + 1] + 0.114 * d[idx + 2]
     }
-    lums.sort((a, b) => a - b)
 
-    // Percentiles 3% y 97% para ignorar reflejos o píxeles aislados
-    const pLow = lums[Math.floor(lums.length * 0.03)] ?? 0
-    const pHigh = lums[Math.floor(lums.length * 0.97)] ?? 255
-    const dynamicRange = Math.max(35, pHigh - pLow)
+    // 2. Filtro espacial de división de fondo local (2D separable box-blur)
+    // Neutraliza completamente sombras de celular, brillos plásticos y gradientes de luz
+    const radius = Math.max(5, Math.floor(width * 0.04))
+    const temp = new Float32Array(totalPixels)
+    const bg = new Float32Array(totalPixels)
 
-    // Si la zona está en sombra (el brillo superior es menor a 160), aplicamos corrección gamma para levantar medios tonos
-    const isShadowed = pHigh < 160
-    const gamma = isShadowed ? 0.82 : 0.95
+    // Pase horizontal
+    for (let y = 0; y < height; y++) {
+      const rowStart = y * width
+      let sum = 0
+      let count = 0
+      for (let x = -radius; x <= radius; x++) {
+        const nx = Math.min(width - 1, Math.max(0, x))
+        sum += gray[rowStart + nx]
+        count++
+      }
+      temp[rowStart] = sum / count
+      for (let x = 1; x < width; x++) {
+        const addIdx = Math.min(width - 1, x + radius)
+        const remIdx = Math.max(0, x - radius - 1)
+        sum += gray[rowStart + addIdx] - gray[rowStart + remIdx]
+        temp[rowStart + x] = sum / count
+      }
+    }
 
-    for (let i = 0; i < d.length; i += 4) {
-      const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
-      // Normalización adaptativa de niveles (Auto-Levels): estira el rango útil de la sombra eliminando la penumbra del celular
-      let normalized = ((gray - pLow) / dynamicRange) * 255
-      normalized = Math.max(0, Math.min(255, normalized))
+    // Pase vertical
+    for (let x = 0; x < width; x++) {
+      let sum = 0
+      let count = 0
+      for (let y = -radius; y <= radius; y++) {
+        const ny = Math.min(height - 1, Math.max(0, y))
+        sum += temp[ny * width + x]
+        count++
+      }
+      bg[x] = sum / count
+      for (let y = 1; y < height; y++) {
+        const addIdx = Math.min(height - 1, y + radius)
+        const remIdx = Math.max(0, y - radius - 1)
+        sum += temp[addIdx * width + x] - temp[remIdx * width + x]
+        bg[y * width + x] = sum / count
+      }
+    }
 
-      // Corrección gamma para levantar el fondo ensombrecido sin saturar el texto
-      normalized = Math.pow(normalized / 255, gamma) * 255
+    // 3. Normalización de alto contraste:
+    // El fondo (sea blanco o verde oscuro) se equilibra a neutro (128)
+    // y los caracteres de texto resaltan con máxima nitidez sin manchas oscuras
+    for (let i = 0; i < totalPixels; i++) {
+      const diff = gray[i] - bg[i]
+      let val = 128 + diff * 3.4
+      val = Math.max(0, Math.min(255, val))
 
-      d[i] = normalized
-      d[i + 1] = normalized
-      d[i + 2] = normalized
+      const idx = i * 4
+      d[idx] = val
+      d[idx + 1] = val
+      d[idx + 2] = val
     }
 
     ctx.putImageData(imgData, startX, startY)
@@ -294,14 +326,14 @@ function captureZones(video: HTMLVideoElement, scale = 0.74): { textImg: string;
 
   // 2. Extracción enfocada para OCR:
   // Zona A: ID / Código en esquina inferior derecha
-  // Ocupa del 60% al 97% horizontal y del 88% al 98% vertical (10% de altura)
-  // Con este tamaño y zoom 4.5x, aísla estrictamente el ID (OPxx-xxx) y elimina cualquier texto superior
-  const codeSrcX = Math.floor(guide.x + guide.w * 0.60)
-  const codeSrcY = Math.floor(guide.y + guide.h * 0.88)
-  const codeSrcW = Math.floor(guide.w * 0.37)
-  const codeSrcH = Math.floor(guide.h * 0.10)
+  // Ocupa del 63% al 96% horizontal y del 89% al 97.8% vertical (8.8% de altura)
+  // Zoom optimizado a 2.6x para evitar artefactos de pixelación y duplicación de números
+  const codeSrcX = Math.floor(guide.x + guide.w * 0.63)
+  const codeSrcY = Math.floor(guide.y + guide.h * 0.89)
+  const codeSrcW = Math.floor(guide.w * 0.33)
+  const codeSrcH = Math.floor(guide.h * 0.088)
 
-  const CODE_ZOOM = 4.5
+  const CODE_ZOOM = 2.6
   const codeDstW = Math.floor(codeSrcW * CODE_ZOOM)
   const codeDstH = Math.floor(codeSrcH * CODE_ZOOM)
 
@@ -520,11 +552,11 @@ export default function ScannerPage() {
     ctx.setLineDash([])
 
     // 4. Recuadro guía en esquina inferior derecha para el Nº / ID de Carta (OPxx-xxx)
-    // Cubre del 60% al 97% horizontal y del 88% al 98% vertical para coincidir exactamente con el crop
-    const codeBoxX = Math.round(x + w * 0.60)
-    const codeBoxY = Math.round(y + h * 0.88)
-    const codeBoxW = Math.round(w * 0.37)
-    const codeBoxH = Math.round(h * 0.10)
+    // Cubre del 63% al 96% horizontal y del 89% al 97.8% vertical para coincidir exactamente con el crop
+    const codeBoxX = Math.round(x + w * 0.63)
+    const codeBoxY = Math.round(y + h * 0.89)
+    const codeBoxW = Math.round(w * 0.33)
+    const codeBoxH = Math.round(h * 0.088)
     const codeR = 6
 
     ctx.strokeStyle = color === '#22c55e' ? 'rgba(34, 197, 94, 0.95)' : 'rgba(96, 165, 250, 0.85)'
@@ -600,47 +632,73 @@ export default function ScannerPage() {
   // Búsqueda en BD y comparación visual con OpenCV
   const searchAndMatchVisual = useCallback(
     async (
-      candidate: { query: string; isCode: boolean },
+      candidatesToTry: { query: string; isCode: boolean } | { query: string; isCode: boolean }[],
       artCanvas: HTMLCanvasElement
     ) => {
       setScanState('matching')
       setBatchProgress('')
       try {
+        const candidateList = Array.isArray(candidatesToTry) ? candidatesToTry : [candidatesToTry]
         let found: Card[] = []
-        if (candidate.isCode) {
-          const clean = normalizeFoundCode(candidate.query)
-          const res = await api.getCards({ q: clean, limit: 20 })
-          found = res.data || []
-          if (found.length === 0) {
+        let activeCandidate: { query: string; isCode: boolean } | null = null
+
+        // Intentar candidatos en orden de prioridad: si el código falla o no existe en BD, cae automáticamente al nombre alterno
+        for (const candidate of candidateList) {
+          if (candidate.isCode) {
+            const clean = normalizeFoundCode(candidate.query)
             try {
-              const single = await api.getCard(clean)
-              if (single) found = [single]
-            } catch {}
-          }
-        } else {
-          // Búsqueda por NOMBRE (ej. Monkey.D.Luffy, Nami, etc.)
-          // Traer todas las cartas disponibles para este personaje
-          const firstRes = await api.getCards({ q: candidate.query, limit: 100 })
-          found = firstRes.data || []
-          if (firstRes.total > found.length && firstRes.pages > 1) {
-            for (let p = 2; p <= firstRes.pages; p++) {
-              try {
-                const nextRes = await api.getCards({ q: candidate.query, limit: 100, page: p })
-                if (nextRes.data) found = found.concat(nextRes.data)
-              } catch {}
+              const res = await api.getCards({ q: clean, limit: 20 })
+              let list = res.data || []
+              if (list.length === 0) {
+                try {
+                  const single = await api.getCard(clean)
+                  if (single) list = [single]
+                } catch {}
+              }
+              if (list.length > 0) {
+                found = list
+                activeCandidate = candidate
+                break
+              }
+            } catch (err) {
+              console.warn('[Search] Error consultando código en BD:', candidate.query, err)
+            }
+          } else {
+            // Búsqueda por NOMBRE (ej. Monkey.D.Luffy, Buggy, Nami, etc.)
+            // Traer todas las cartas disponibles para este personaje
+            try {
+              const firstRes = await api.getCards({ q: candidate.query, limit: 100 })
+              let list = firstRes.data || []
+              if (firstRes.total > list.length && firstRes.pages > 1) {
+                for (let p = 2; p <= firstRes.pages; p++) {
+                  try {
+                    const nextRes = await api.getCards({ q: candidate.query, limit: 100, page: p })
+                    if (nextRes.data) list = list.concat(nextRes.data)
+                  } catch {}
+                }
+              }
+              if (list.length > 0) {
+                found = list
+                activeCandidate = candidate
+                break
+              }
+            } catch (err) {
+              console.warn('[Search] Error consultando nombre en BD:', candidate.query, err)
             }
           }
         }
 
-        setDetectedText(candidate.isCode ? `Código: ${candidate.query}` : `"${candidate.query}"`)
-        setDetectedQuery(candidate.query)
-
-        if (found.length === 0) {
+        if (!activeCandidate || found.length === 0) {
           setCards([])
           setDebugMatches([])
           setScanState('error')
+          setIsCovered(true)
+          loopActiveRef.current = false
           return
         }
+
+        setDetectedText(activeCandidate.isCode ? `Código: ${activeCandidate.query}` : `"${activeCandidate.query}"`)
+        setDetectedQuery(activeCandidate.query)
 
         // CASO 1: Si solo hay 1 carta que coincide exactamente en BD -> Mostrarla directamente
         if (found.length === 1) {
@@ -745,7 +803,7 @@ export default function ScannerPage() {
             }
           }
 
-          if (candidate.isCode || found.length <= 5) {
+          if (activeCandidate.isCode || found.length <= 5) {
             // Si es búsqueda por código o son pocas cartas (<= 5): evaluar todas directamente
             for (const card of found) {
               const result = await evaluateCard(card)
@@ -926,9 +984,8 @@ export default function ScannerPage() {
       setCandidates(foundCandidates)
       isScanningRef.current = false
 
-      // Procesar de inmediato la primera opción (código prioritario o nombre)
-      const primary = foundCandidates[0]
-      await searchAndMatchVisual(primary, artCanvas)
+      // Procesar candidatos con fallback automático (código prioritario; si falla o no existe en BD, cae al nombre alterno)
+      await searchAndMatchVisual(foundCandidates, artCanvas)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       setDebugError(msg)
@@ -1304,11 +1361,13 @@ export default function ScannerPage() {
             )}
 
             {/* 3. SECCIÓN: OTROS TEXTOS LEÍDOS */}
-            {candidates.length > 1 && (
+            {candidates.filter((c) => c.query !== detectedQuery).length > 0 && (
               <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 mb-3">
                 <p className="text-slate-400 text-xs mb-2">Otros textos leídos (toca para reintentar con este):</p>
                 <div className="flex flex-wrap gap-1.5">
-                  {candidates.slice(1).map((c, i) => (
+                  {candidates
+                    .filter((c) => c.query !== detectedQuery)
+                    .map((c, i) => (
                     <button
                       key={i}
                       onClick={() => {
