@@ -41,10 +41,47 @@ export function getGuideRect(W: number, H: number, scale = 0.74) {
   }
 }
 
-// Calibración optimizada para detección inmediata al encuadrar la carta
-const STABLE_NEEDED = 2 // Dispara de inmediato (~100ms al detectar carta)
-const VARIANCE_MIN = 120 // Permite cartas con fondos oscuros o arte plano
-const MAD_MAX = 18.0 // Altamente tolerante al pulso y movimiento de la mano
+// Mapeo exacto entre la pantalla del usuario (CSS object-cover) y los píxeles reales del sensor de video
+export function getVideoGuideRect(video: HTMLVideoElement, scale = 0.74) {
+  const W_disp = video.clientWidth || 360
+  const H_disp = video.clientHeight || 480
+  const W_vid = video.videoWidth || W_disp
+  const H_vid = video.videoHeight || H_disp
+
+  // Escala que aplica object-cover al video para llenar el contenedor
+  const s = Math.max(W_disp / W_vid, H_disp / H_vid)
+  const W_rend = W_vid * s
+  const H_rend = H_vid * s
+  const dx = (W_rend - W_disp) / 2
+  const dy = (H_rend - H_disp) / 2
+
+  // Rectángulo guía en coordenadas de la pantalla (lo que ve el usuario)
+  const dispGuide = getGuideRect(W_disp, H_disp, scale)
+
+  // Mapeo exacto hacia coordenadas del sensor de video original
+  const vx = Math.round((dispGuide.x + dx) / s)
+  const vy = Math.round((dispGuide.y + dy) / s)
+  const vw = Math.round(dispGuide.w / s)
+  const vh = Math.round(dispGuide.h / s)
+
+  return {
+    dispGuide,
+    videoGuide: {
+      x: Math.max(0, vx),
+      y: Math.max(0, vy),
+      w: Math.min(W_vid - vx, vw),
+      h: Math.min(H_vid - vy, vh),
+    },
+    s,
+    dx,
+    dy,
+  }
+}
+
+// Calibración optimizada para dar tiempo de centrar el ID y evitar fotos con movimiento
+const STABLE_NEEDED = 7 // Requiere ~600-700ms de calma sostenida para enfocar y centrar
+const VARIANCE_MIN = 110 // Detecta presencia de la carta
+const MAD_MAX = 7.5 // Si la mano se mueve para centrar (MAD > 7.5), NO dispara; espera a que se detenga
 
 // Códigos One Piece: OP01-001, OP15-083, EB04-061, ST01-001, P-001, PRB01-001
 const CODE_RE = /\b((?:OP|ST|EB|PRB?|P)\s*[-–—._/]?\s*\d{1,3}\s*[-–—._/]?\s*\d{2,3}(?:_p\d+|_r\d+)?)\b/gi
@@ -178,9 +215,9 @@ function enhanceContrast(ctx: CanvasRenderingContext2D, width: number, height: n
 }
 
 function captureZones(video: HTMLVideoElement, scale = 0.74): { textImg: string; artCanvas: HTMLCanvasElement } {
-  const W = video.videoWidth || 1280
-  const H = video.videoHeight || 720
-  const guide = getGuideRect(W, H, scale)
+  // Usar mapeo exacto de coordenadas de la pantalla a los píxeles reales del video
+  const { videoGuide } = getVideoGuideRect(video, scale)
+  const guide = videoGuide
 
   // 1. Carta completa normalizada para comparación OpenCV (300 x 419, ratio 63:88)
   const artCanvas = document.createElement('canvas')
@@ -192,30 +229,29 @@ function captureZones(video: HTMLVideoElement, scale = 0.74): { textImg: string;
   aCtx.drawImage(video, guide.x, guide.y, guide.w, guide.h, 0, 0, 300, 419)
 
   // 2. Extracción enfocada para OCR:
-  // Zona A: ID / Código en esquina inferior derecha (x: 58% a 97%, y: 89.5% a 98%)
-  // Altura compacta para evitar tomar parte del nombre o las afiliaciones/rasgos
-  // Con magnificación 4.0x para que los caracteres pequeños (OP02-028, OP15-083, etc.) sean nítidos
-  const codeSrcX = Math.floor(guide.x + guide.w * 0.58)
-  const codeSrcY = Math.floor(guide.y + guide.h * 0.895)
-  const codeSrcW = Math.floor(guide.w * 0.39)
-  const codeSrcH = Math.floor(guide.h * 0.085)
+  // Zona A: ID / Código en esquina inferior derecha
+  // Ocupa del 48% al 98% horizontal y del 78% al 98% vertical (20% de altura)
+  // Con este tamaño y mapeo 1:1, NUNCA cae fuera de la carta ni en la mesa
+  const codeSrcX = Math.floor(guide.x + guide.w * 0.48)
+  const codeSrcY = Math.floor(guide.y + guide.h * 0.78)
+  const codeSrcW = Math.floor(guide.w * 0.50)
+  const codeSrcH = Math.floor(guide.h * 0.20)
 
-  const CODE_ZOOM = 4.0
+  const CODE_ZOOM = 2.8
   const codeDstW = Math.floor(codeSrcW * CODE_ZOOM)
   const codeDstH = Math.floor(codeSrcH * CODE_ZOOM)
 
-  // Zona B: Franja de Nombre del Personaje (x: 6% a 94%, y: 75% a 88%)
-  // Corta estrictamente por debajo del párrafo de efectos (que termina en ~74%) y por encima del código
-  const nameSrcX = Math.floor(guide.x + guide.w * 0.06)
-  const nameSrcY = Math.floor(guide.y + guide.h * 0.75)
-  const nameSrcW = Math.floor(guide.w * 0.88)
-  const nameSrcH = Math.floor(guide.h * 0.13)
+  // Zona B: Franja de Nombre del Personaje (x: 5% a 95%, y: 70% a 88%)
+  const nameSrcX = Math.floor(guide.x + guide.w * 0.05)
+  const nameSrcY = Math.floor(guide.y + guide.h * 0.70)
+  const nameSrcW = Math.floor(guide.w * 0.90)
+  const nameSrcH = Math.floor(guide.h * 0.18)
 
-  const NAME_ZOOM = 2.5
+  const NAME_ZOOM = 2.2
   const nameDstW = Math.floor(nameSrcW * NAME_ZOOM)
   const nameDstH = Math.floor(nameSrcH * NAME_ZOOM)
 
-  // Canvas compuesto: Apila la Zona de Código (arriba, súper ampliada) y la Zona de Nombre (abajo)
+  // Canvas compuesto: Apila la Zona de Código (arriba) y la Zona de Nombre (abajo)
   const sep = 16
   const totalW = Math.max(codeDstW, nameDstW)
   const totalH = codeDstH + nameDstH + sep
@@ -229,7 +265,7 @@ function captureZones(video: HTMLVideoElement, scale = 0.74): { textImg: string;
   tCtx.fillStyle = '#ffffff'
   tCtx.fillRect(0, 0, totalW, totalH)
 
-  // Dibujar Código ampliado 4x arriba
+  // Dibujar Código ampliado arriba
   tCtx.drawImage(video, codeSrcX, codeSrcY, codeSrcW, codeSrcH, 0, 0, codeDstW, codeDstH)
 
   // Separador blanco
@@ -295,6 +331,7 @@ export default function ScannerPage() {
   const [candidates, setCandidates] = useState<{ query: string; isCode: boolean }[]>([])
   const [cards, setCards] = useState<ScoredCard[]>([])
   const [selectedCard, setSelectedCard] = useState<string | null>(null)
+  const [batchProgress, setBatchProgress] = useState<string>('')
 
   // Datos para el panel de diagnóstico (Debug)
   const [capturedArtData, setCapturedArtData] = useState<string | null>(null)
@@ -311,7 +348,7 @@ export default function ScannerPage() {
   }, [cameraOn])
 
   // Dibujar ÚNICAMENTE las esquinas del cuadro (Corner Brackets) y la línea guía OCR
-  const drawOverlay = useCallback((color: string) => {
+  const drawOverlay = useCallback((color: string, progress = 0) => {
     const canvas = overlayRef.current
     if (!canvas) return
     const container = containerRef.current
@@ -377,8 +414,8 @@ export default function ScannerPage() {
     ctx.lineTo(x, y + h - cornerLen)
     ctx.stroke()
 
-    // 3. Línea guía para la franja de nombre (al ~76% de la altura de la carta) sin texto
-    const nameLineY = Math.round(y + h * 0.76)
+    // 3. Línea guía para la franja de nombre (al ~74% de la altura de la carta) sin texto
+    const nameLineY = Math.round(y + h * 0.74)
     ctx.strokeStyle = 'rgba(250, 204, 21, 0.75)'
     ctx.lineWidth = 1.5
     ctx.setLineDash([5, 4])
@@ -389,14 +426,14 @@ export default function ScannerPage() {
     ctx.setLineDash([])
 
     // 4. Recuadro guía en esquina inferior derecha para el Nº / ID de Carta (OPxx-xxx)
-    // Más bajo y delgado para evitar encimar el nombre o la afiliación
-    const codeBoxX = Math.round(x + w * 0.58)
-    const codeBoxY = Math.round(y + h * 0.895)
-    const codeBoxW = Math.round(w * 0.39)
-    const codeBoxH = Math.round(h * 0.085)
-    const codeR = 4
+    // Cubre del 48% al 98% horizontal y del 78% al 98% vertical para coincidir exactamente con el crop
+    const codeBoxX = Math.round(x + w * 0.48)
+    const codeBoxY = Math.round(y + h * 0.78)
+    const codeBoxW = Math.round(w * 0.50)
+    const codeBoxH = Math.round(h * 0.20)
+    const codeR = 6
 
-    ctx.strokeStyle = color === '#22c55e' ? 'rgba(34, 197, 94, 0.9)' : 'rgba(96, 165, 250, 0.80)'
+    ctx.strokeStyle = color === '#22c55e' ? 'rgba(34, 197, 94, 0.95)' : 'rgba(96, 165, 250, 0.85)'
     ctx.lineWidth = 1.5
     ctx.setLineDash([4, 3])
     drawRoundRect(ctx, codeBoxX, codeBoxY, codeBoxW, codeBoxH, codeR)
@@ -404,10 +441,24 @@ export default function ScannerPage() {
     ctx.setLineDash([])
 
     ctx.fillStyle = color === '#22c55e' ? 'rgba(34, 197, 94, 0.95)' : 'rgba(96, 165, 250, 0.95)'
-    ctx.font = `bold ${Math.max(8, Math.round(w * 0.026))}px monospace`
+    ctx.font = `bold ${Math.max(9, Math.round(w * 0.028))}px monospace`
     ctx.textAlign = 'right'
-    ctx.fillText('ID Carta', codeBoxX + codeBoxW - 3, codeBoxY - 3)
+    ctx.fillText('🔍 Zona ID (OPxx-xxx)', codeBoxX + codeBoxW - 4, codeBoxY - 4)
     ctx.textAlign = 'left'
+
+    // 5. Barra de progreso visual cuando el usuario mantiene quieta la carta
+    if (progress > 0 && progress < 1) {
+      const barTotalW = w - 32
+      const barProgW = Math.round(barTotalW * progress)
+      const barX = x + 16
+      const barY = y + h - 8
+      ctx.fillStyle = 'rgba(250, 204, 21, 0.35)'
+      drawRoundRect(ctx, barX, barY, barTotalW, 5, 2.5)
+      ctx.fill()
+      ctx.fillStyle = 'rgba(250, 204, 21, 0.95)'
+      drawRoundRect(ctx, barX, barY, barProgW, 5, 2.5)
+      ctx.fill()
+    }
   }, [])
 
   const analyzeFrame = useCallback((): { variance: number; mad: number } | null => {
@@ -426,8 +477,8 @@ export default function ScannerPage() {
     if (!ctx) return null
     ctx.drawImage(video, 0, 0, W, H)
 
-    const guide = getGuideRect(W, H, DEFAULT_CARD_SCALE)
-    const { data } = ctx.getImageData(guide.x, guide.y, guide.w, guide.h)
+    const { videoGuide } = getVideoGuideRect(video, DEFAULT_CARD_SCALE)
+    const { data } = ctx.getImageData(videoGuide.x, videoGuide.y, videoGuide.w, videoGuide.h)
 
     const lums: number[] = []
     let sum = 0
@@ -459,11 +510,12 @@ export default function ScannerPage() {
       artCanvas: HTMLCanvasElement
     ) => {
       setScanState('matching')
+      setBatchProgress('')
       try {
         let found: Card[] = []
         if (candidate.isCode) {
           const clean = normalizeFoundCode(candidate.query)
-          const res = await api.getCards({ q: clean, limit: 16 })
+          const res = await api.getCards({ q: clean, limit: 20 })
           found = res.data || []
           if (found.length === 0) {
             try {
@@ -472,8 +524,18 @@ export default function ScannerPage() {
             } catch {}
           }
         } else {
-          const res = await api.getCards({ q: candidate.query, limit: 16 })
-          found = res.data || []
+          // Búsqueda por NOMBRE (ej. Monkey.D.Luffy, Nami, etc.)
+          // Traer todas las cartas disponibles para este personaje
+          const firstRes = await api.getCards({ q: candidate.query, limit: 100 })
+          found = firstRes.data || []
+          if (firstRes.total > found.length && firstRes.pages > 1) {
+            for (let p = 2; p <= firstRes.pages; p++) {
+              try {
+                const nextRes = await api.getCards({ q: candidate.query, limit: 100, page: p })
+                if (nextRes.data) found = found.concat(nextRes.data)
+              } catch {}
+            }
+          }
         }
 
         setDetectedText(candidate.isCode ? `Código: ${candidate.query}` : `"${candidate.query}"`)
@@ -507,7 +569,7 @@ export default function ScannerPage() {
           return
         }
 
-        // CASO 2: Hay múltiples variantes (ej. regular vs alt-art / manga) -> Comparar con OpenCV si está listo
+        // CASO 2: Comparar con OpenCV
         let cv: any = null
         try {
           cv = await loadOpenCV()
@@ -517,15 +579,55 @@ export default function ScannerPage() {
 
         const scored: ScoredCard[] = []
 
-        if (cv) {
-          for (const card of found.slice(0, 8)) {
+        if (!cv) {
+          // Si OpenCV no está disponible aún, mostrar las cartas encontradas en la BD
+          for (const card of found.slice(0, 10)) {
+            scored.push({ ...card, visualScore: 0, visualMatches: 0 })
+          }
+        } else if (candidate.isCode || found.length <= 5) {
+          // Si es búsqueda por código o son pocas cartas (<= 5): evaluar todas directamente
+          for (const card of found) {
             const locale = card.locales.en ?? card.locales.jp
             const imgUrl = locale?.img_url ? proxyImg(locale.img_url) : null
             if (!imgUrl) {
               scored.push({ ...card, visualScore: 0, visualMatches: 0 })
               continue
             }
+            try {
+              const imgEl = await preloadImage(imgUrl)
+              const result = compareWithORB(cv, artCanvas, imgEl)
+              scored.push({
+                ...card,
+                visualScore: result.score,
+                visualMatches: result.matches,
+              })
+            } catch {
+              scored.push({ ...card, visualScore: 0, visualMatches: 0 })
+            }
+          }
+        } else {
+          // CASO ESPECIAL: Carta por nombre con muchos resultados (> 5 cartas)
+          // Proceso progresivo por lotes solicitado:
+          // 1. Lote 1: primeras 5 cartas
+          // 2. Si no hay coincidencia >= 50%:
+          //    - Si quedan <= 10 restantes: evalúa todas las restantes
+          //    - Si quedan > 10 restantes: evalúa por lotes de 20 hasta llegar al total
+          const totalCards = found.length
+          let currentIndex = 0
+          let foundWinner = false
 
+          // Lote 1: primeras 5 cartas
+          const firstBatchSize = Math.min(5, totalCards)
+          setBatchProgress(`Evaluando lote 1 (1-${firstBatchSize} de ${totalCards})…`)
+
+          for (let i = 0; i < firstBatchSize; i++) {
+            const card = found[i]
+            const locale = card.locales.en ?? card.locales.jp
+            const imgUrl = locale?.img_url ? proxyImg(locale.img_url) : null
+            if (!imgUrl) {
+              scored.push({ ...card, visualScore: 0, visualMatches: 0 })
+              continue
+            }
             try {
               const imgEl = await preloadImage(imgUrl)
               const result = compareWithORB(cv, artCanvas, imgEl)
@@ -539,15 +641,58 @@ export default function ScannerPage() {
             }
           }
 
-          // Ordenar de mayor a menor coincidencia visual
-          scored.sort((a, b) => (b.visualScore ?? 0) - (a.visualScore ?? 0))
-        } else {
-          // Si OpenCV no está disponible aún, mostrar las cartas encontradas en la BD
-          for (const card of found) {
-            scored.push({ ...card, visualScore: 0, visualMatches: 0 })
+          currentIndex = firstBatchSize
+
+          // Verificar si alguna de las primeras 5 alcanzó >= 50%
+          const bestInBatch1 = scored.reduce((max, c) => Math.max(max, c.visualScore ?? 0), 0)
+          if (bestInBatch1 >= 50) {
+            foundWinner = true
+          }
+
+          // Lotes subsiguientes si no se alcanzó el 50%
+          let batchNumber = 2
+          while (!foundWinner && currentIndex < totalCards) {
+            const remaining = totalCards - currentIndex
+            const currentBatchSize = remaining <= 10 ? remaining : Math.min(20, remaining)
+            const endIndex = currentIndex + currentBatchSize
+
+            setBatchProgress(`Evaluando lote ${batchNumber} (${currentIndex + 1}-${endIndex} de ${totalCards})…`)
+
+            for (let i = currentIndex; i < endIndex; i++) {
+              const card = found[i]
+              const locale = card.locales.en ?? card.locales.jp
+              const imgUrl = locale?.img_url ? proxyImg(locale.img_url) : null
+              if (!imgUrl) {
+                scored.push({ ...card, visualScore: 0, visualMatches: 0 })
+                continue
+              }
+              try {
+                const imgEl = await preloadImage(imgUrl)
+                const result = compareWithORB(cv, artCanvas, imgEl)
+                scored.push({
+                  ...card,
+                  visualScore: result.score,
+                  visualMatches: result.matches,
+                })
+              } catch {
+                scored.push({ ...card, visualScore: 0, visualMatches: 0 })
+              }
+            }
+
+            currentIndex = endIndex
+            batchNumber++
+
+            // Si en este lote apareció una coincidencia >= 50%, detenemos la búsqueda
+            const currentBest = scored.reduce((max, c) => Math.max(max, c.visualScore ?? 0), 0)
+            if (currentBest >= 50) {
+              foundWinner = true
+              break
+            }
           }
         }
 
+        // Ordenar de mayor a menor coincidencia visual
+        scored.sort((a, b) => (b.visualScore ?? 0) - (a.visualScore ?? 0))
         setCards(scored)
 
         // Registrar datos de diagnóstico visual para depuración
@@ -576,12 +721,14 @@ export default function ScannerPage() {
           setSelectedCard(null)
         }
 
+        setBatchProgress('')
         setScanState('done')
         setIsCovered(true)
         loopActiveRef.current = false
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         setDebugError(msg)
+        setBatchProgress('')
         setScanState('error')
         setIsCovered(true)
         loopActiveRef.current = false
@@ -674,13 +821,13 @@ export default function ScannerPage() {
           const f = stableRef.current
           if (f === 0) {
             setScanState('ready')
-            drawOverlay('#64748b')
+            drawOverlay('#64748b', 0)
           } else if (f < STABLE_NEEDED) {
             setScanState('detecting')
-            drawOverlay('#facc15')
+            drawOverlay('#facc15', f / STABLE_NEEDED)
           } else {
             stableRef.current = 0
-            drawOverlay('#22c55e')
+            drawOverlay('#22c55e', 1)
             doScan()
             return
           }
@@ -719,7 +866,7 @@ export default function ScannerPage() {
         overlay.width = w
         overlay.height = h
       }
-      drawOverlay(scanState === 'detecting' ? '#facc15' : scanState === 'scanning' ? '#22c55e' : '#64748b')
+      drawOverlay(scanState === 'detecting' ? '#facc15' : scanState === 'scanning' ? '#22c55e' : '#64748b', 0)
     }
   }, [drawOverlay, scanState])
 
@@ -740,23 +887,24 @@ export default function ScannerPage() {
     setCandidates([])
     setDetectedText('')
     setDetectedQuery('')
+    setBatchProgress('')
     setDebugMatches([])
     capturedArtRef.current = null
     isScanningRef.current = false
     setIsCovered(false)
     setScanState('ready')
-    drawOverlay('#64748b')
+    drawOverlay('#64748b', 0)
     startLoop()
   }, [drawOverlay, startLoop])
 
   const statusLabel: Record<ScanState, string> = {
-    ready: 'Centra la carta entre las 4 esquinas',
-    detecting: 'Carta detectada, mantén quieta…',
+    ready: 'Centra la carta y el código ID en el marco',
+    detecting: 'Enfocando... mantén quieta la carta para capturar',
     scanning: 'Leyendo código y texto con OCR…',
-    matching: 'Comparando ilustración con OpenCV…',
+    matching: batchProgress || 'Comparando ilustración con OpenCV…',
     choosing: 'Selecciona el texto a buscar',
     done: cards.length > 0 ? `${cards.length} resultado(s) encontrado(s)` : 'Sin resultados',
-    error: 'No se identificó la carta. Ajusta el tamaño del marco o pulsa Escanear.',
+    error: 'No se identificó el código. Centra la esquina inferior derecha y reintenta.',
   }
   const statusColor: Record<ScanState, string> = {
     ready: 'text-slate-300',
