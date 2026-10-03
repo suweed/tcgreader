@@ -217,26 +217,17 @@ function parseOcrText(raw: string): { candidates: { query: string; isCode: boole
     if (CODE_RE.test(trimmed) || PROMO_RE.test(trimmed) || CODE_NO_HYPHEN_RE.test(trimmed)) continue
 
     // Descartar si contiene o es parte de palabras reservadas de tipo de carta (ej: 'CHARACTER', 'ACTER', 'RACTER', 'CHARAC')
-    if (CARD_TYPES.has(upper) || TYPE_KEYWORDS.some((t) => t.includes(upper) && upper.length >= 3)) continue
-    if (CARD_TYPE_PREFIXES.some((p) => upper.startsWith(p))) continue
-
-    // Descartar afiliaciones y grupos (ej. 'Whitebeard Pirates Allies', 'Straw Hat Crew')
-    if (/\b(PIRATES?|ALLIES|ALLIANCE|CREW|FAMILY|NAVY|ARMY|KINGDOM|CORPS|REVOLUTIONARY|GOVERNMENT|CLAN|TRIBE|LAND|WANO|SUPERNOVAS?|BAROQUE|WORKS)\b/i.test(upper)) continue
+    // Solo si la línea es corta (para no descartar un nombre de evento muy largo que casualmente incluya la palabra "character" si los hay)
+    if (trimmed.length < 20) {
+      if (CARD_TYPES.has(upper) || TYPE_KEYWORDS.some((t) => t.includes(upper) && upper.length >= 3)) continue
+      if (CARD_TYPE_PREFIXES.some((p) => upper.startsWith(p))) continue
+    }
 
     // Descartar editorial / copyright / país / sellos
     if (/©|TOEI|ANIMATION|BANDAI|JAPAN|SHUEISHA|EIICHIRO|ODA|NOT FOR SALE|B\.S|B•S/i.test(trimmed)) continue
 
     // Descartar números puros (poder, coste, etc.)
     if (/^\d+$/.test(trimmed)) continue
-
-    // Descartar atributos, costes y términos técnicos de cartas si vienen solos
-    const words = upper.split(/\s+/).map((w) => w.replace(/'S$/, '').replace(/[^A-Z0-9]/g, ''))
-    if (words.some((w) => ['SLASH', 'STRIKE', 'SPECIAL', 'WISDOM', 'RANGED', 'POWER', 'COST', 'COUNTER', 'TRIGGER', 'ATTRIBUTE', 'TYPE', 'LIFE'].includes(w)) && words.length <= 2) continue
-
-    // Descartar si contiene palabras típicas de reglas/efectos
-    const effectWords = words.filter((w) => EFFECT_KEYWORDS.has(w))
-    if (effectWords.length > 0 && (words.length >= 3 || effectWords.length >= words.length * 0.35)) continue
-    if (words.some((w) => ['OPPONENT', 'CHARACTER', 'CHARACTERS', 'CARD', 'CARDS', 'RESTED', 'DON'].includes(w))) continue
 
     add(trimmed, false)
     const stripped = trimmed.replace(/[.'\-_()']/g, ' ').replace(/\s+/g, ' ').trim()
@@ -313,12 +304,19 @@ function enhanceContrastZone(
 
     // 3. Normalización de contraste inteligente:
     // Mantiene la polaridad original (fondo negro sigue siendo negro, blanco sigue siendo blanco)
-    // pero exagera drásticamente la diferencia local para hacer el texto hiper nítido.
+    // Se usa un umbral (threshold) para no amplificar el ruido del sensor (estática) en fondos oscuros.
     for (let i = 0; i < totalPixels; i++) {
       const diff = gray[i] - bg[i]
-      // Aumentar el contraste local. Si el pixel es ruido/sombra leve, apenas cambia.
-      // Si es parte de un borde/texto (diff grande), se va a negro puro o blanco puro.
-      let val = gray[i] + diff * 3.0
+      let val = gray[i]
+      
+      // Si el diferencial es mayor al ruido típico de cámara (aprox 12-15), es texto/borde. Lo amplificamos.
+      if (Math.abs(diff) > 12) {
+        val = gray[i] + diff * 3.5
+      } else {
+        // Es ruido de fondo. Lo amortiguamos empujándolo hacia el promedio local.
+        val = bg[i]
+      }
+
       val = Math.max(0, Math.min(255, val))
 
       const idx = i * 4
