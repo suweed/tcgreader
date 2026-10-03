@@ -7,7 +7,7 @@
     "dev": "node --experimental-strip-types scripts/dev-server.ts",
     "dev:api": "node --experimental-strip-types scripts/dev-server.ts",
     "dev:frontend": "npm run dev --prefix frontend",
-    "build": "cd frontend && npm install && npm run build",
+    "build": "if [ -d frontend ]; then cd frontend && npm install && npm run build; else npm install && npm run build; fi",
     "migrate": "node scripts/migrate_to_postgres.js",
     "import": "node scripts/import_cards_postgres.js"
   },
