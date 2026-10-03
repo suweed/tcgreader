@@ -25,7 +25,6 @@ interface DebugMatchInfo {
 export const CARD_RATIO = 63 / 88 // 0.715909...
 
 export function getGuideRect(W: number, H: number, scale = 0.72) {
-  // Ajusta la altura al scale especificado (por defecto ~72% de la pantalla) manteniendo 63:88
   let h = H * scale
   let w = h * CARD_RATIO
   if (w > W * 0.90) {
@@ -42,9 +41,10 @@ export function getGuideRect(W: number, H: number, scale = 0.72) {
   }
 }
 
-const STABLE_NEEDED = 7
-const VARIANCE_MIN = 300
-const MAD_MAX = 7.5
+// Calibración optimizada para móviles sostenidos con la mano
+const STABLE_NEEDED = 4 // Requiere ~300ms de calma
+const VARIANCE_MIN = 180 // Permite cartas con fondos oscuros o arte plano
+const MAD_MAX = 13.0 // Mucho más tolerante al micro-movimiento del pulso
 
 // Códigos One Piece: OP01-001, OP15-083, EB04-061, ST01-001, P-001, PRB01-001
 const CODE_RE = /\b((?:OP|ST|EB|PRB?|P)\s*[-–—._/]?\s*\d{1,3}\s*[-–—._/]?\s*\d{2,3}(?:_p\d+|_r\d+)?)\b/gi
@@ -242,7 +242,7 @@ export default function ScannerPage() {
   const [debugMatches, setDebugMatches] = useState<DebugMatchInfo[]>([])
   const [debugError, setDebugError] = useState<string>('')
 
-  // Sincronizar referencia de escala
+  // Sincronizar referencia de escala y redibujar esquinas
   useEffect(() => {
     frameScaleRef.current = frameScale
     drawOverlay(scanState === 'detecting' ? '#facc15' : scanState === 'scanning' ? '#22c55e' : '#64748b')
@@ -256,7 +256,7 @@ export default function ScannerPage() {
       .catch((e) => console.warn('OpenCV lazy load:', e))
   }, [cameraOn])
 
-  // Dibujar ÚNICAMENTE las esquinas del cuadro (Corner Brackets) sin invadir el centro
+  // Dibujar ÚNICAMENTE las esquinas del cuadro (Corner Brackets) y la línea guía OCR
   const drawOverlay = useCallback((color: string) => {
     const canvas = overlayRef.current
     if (!canvas || canvas.width === 0) return
@@ -273,7 +273,7 @@ export default function ScannerPage() {
 
     ctx.clearRect(0, 0, W, H)
 
-    // 1. Atenuado exterior suave con la carta recortada
+    // 1. Atenuado exterior suave con la carta recortada en el centro
     ctx.fillStyle = 'rgba(0, 0, 0, 0.45)'
     ctx.fillRect(0, 0, W, H)
 
@@ -316,11 +316,27 @@ export default function ScannerPage() {
     ctx.lineTo(x, y + h - cornerLen)
     ctx.stroke()
 
-    // 3. Indicador muy sutil en esquina inferior derecha para el código
+    // 3. Línea guía para la franja de nombre / OCR (al ~73% de la altura)
+    const nameLineY = Math.round(y + h * 0.73)
+    ctx.strokeStyle = 'rgba(250, 204, 21, 0.65)'
+    ctx.lineWidth = 1.5
+    ctx.setLineDash([5, 4])
+    ctx.beginPath()
+    ctx.moveTo(x + 10, nameLineY)
+    ctx.lineTo(x + w - 10, nameLineY)
+    ctx.stroke()
+    ctx.setLineDash([])
+
+    // Etiqueta discreta encima de la línea de nombre
+    ctx.fillStyle = 'rgba(250, 204, 21, 0.85)'
+    ctx.font = `600 ${Math.max(9, Math.round(w * 0.03))}px sans-serif`
+    ctx.fillText('Línea de nombre / OCR ───', x + 12, nameLineY - 5)
+
+    // 4. Indicador sutil de código en esquina inferior derecha
     const codeIndicatorX = x + w - cornerLen - 4
     const codeIndicatorY = y + h - 8
     ctx.fillStyle = color === '#22c55e' ? 'rgba(34, 197, 94, 0.9)' : 'rgba(250, 204, 21, 0.85)'
-    ctx.font = `600 ${Math.max(9, Math.round(w * 0.032))}px sans-serif`
+    ctx.font = `600 ${Math.max(9, Math.round(w * 0.03))}px sans-serif`
     ctx.textAlign = 'right'
     ctx.fillText('Nº Carta ➔', codeIndicatorX, codeIndicatorY)
     ctx.textAlign = 'left'
@@ -416,7 +432,7 @@ export default function ScannerPage() {
               passedThreshold: true,
             },
           ])
-          setSelectedCard(found[0].card_code) // <-- Abre directamente la carta
+          setSelectedCard(found[0].card_code) // <-- Abre directamente el modal
           setScanState('done')
           return
         }
@@ -475,7 +491,7 @@ export default function ScannerPage() {
         const isCertain = bestScore >= 30 || (bestScore >= 18 && bestScore >= runnerScore * 1.25)
 
         if (isCertain && best) {
-          // Coincidencia segura: Mostrar directamente la carta detectada
+          // Coincidencia segura: Mostrar directamente el modal de la carta detectada
           setSelectedCard(best.card_code)
         }
 
@@ -557,11 +573,14 @@ export default function ScannerPage() {
         const result = analyzeFrame()
         if (result) {
           const { variance, mad } = result
-          if (variance > VARIANCE_MIN && mad < MAD_MAX) {
-            stableRef.current++
+          // Detección acumulativa suave: no resetea brutalmente a 0 ante micro-movimiento
+          const isStable = variance > VARIANCE_MIN && mad < MAD_MAX
+          if (isStable) {
+            stableRef.current = Math.min(STABLE_NEEDED, stableRef.current + 1)
           } else {
-            stableRef.current = 0
+            stableRef.current = Math.max(0, stableRef.current - 1)
           }
+
           const f = stableRef.current
           if (f === 0) {
             setScanState('ready')
@@ -612,7 +631,7 @@ export default function ScannerPage() {
     syncSize()
   }, [drawOverlay])
 
-  // Ajustar tamaño del overlay si cambia el tamaño de la ventana
+  // Ajustar tamaño del overlay si cambia la pantalla o rotación
   useEffect(() => {
     const handleResize = () => {
       const video = webcamRef.current?.video
@@ -658,6 +677,9 @@ export default function ScannerPage() {
     done: cards.length > 0 ? 'text-green-400 font-semibold' : 'text-slate-400',
     error: 'text-red-400 font-semibold',
   }
+
+  // Primeras 5 cartas encontradas en la BD
+  const top5Cards = cards.slice(0, 5)
 
   return (
     <div>
@@ -726,7 +748,7 @@ export default function ScannerPage() {
               </span>
             </div>
 
-            {/* Cámara + marco con SOLO las 4 esquinas */}
+            {/* Cámara + marco con SOLO las 4 esquinas y la línea guía OCR */}
             <div className="relative rounded-2xl overflow-hidden bg-black mb-3 shadow-xl border border-slate-800">
               <Webcam
                 ref={webcamRef}
@@ -779,23 +801,74 @@ export default function ScannerPage() {
               </p>
             </div>
 
-            {/* Texto / Código detectado */}
+            {/* 1. SECCIÓN: IDENTIFICADO (con botón "Ver en álbum") */}
             {detectedText && (
-              <div className="bg-slate-800/90 border border-slate-700 rounded-xl p-3 mb-3 flex items-center justify-between">
+              <div className="bg-slate-800/95 border border-slate-700 rounded-xl p-3.5 mb-3 flex items-center justify-between shadow-md">
                 <div>
-                  <p className="text-slate-400 text-xs">Identificado:</p>
-                  <p className="text-white font-mono font-bold text-sm">{detectedText}</p>
+                  <p className="text-slate-400 text-xs font-medium">Identificado:</p>
+                  <p className="text-white font-mono font-bold text-base">{detectedText}</p>
                 </div>
                 <Link
-                  to={`/search?q=${encodeURIComponent(detectedQuery)}`}
-                  className="text-xs bg-slate-700 hover:bg-slate-600 text-blue-400 px-3 py-1.5 rounded-lg font-medium transition-colors"
+                  to={`/?q=${encodeURIComponent(detectedQuery)}`}
+                  className="text-xs bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-semibold px-3.5 py-2 rounded-lg transition-colors flex items-center gap-1.5 shadow"
                 >
-                  🔍 Ver en BD
+                  <span>📖</span>
+                  <span>Ver en álbum</span>
                 </Link>
               </div>
             )}
 
-            {/* Selección de candidatos si hubo ambigüedad */}
+            {/* 2. SECCIÓN: PRIMERAS 5 CARTAS ENCONTRADAS EN LA BD */}
+            {top5Cards.length > 0 && (
+              <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 mb-3 shadow">
+                <p className="text-xs font-bold text-slate-300 mb-2.5 flex items-center justify-between">
+                  <span>Cartas encontradas en la BD (primeras {top5Cards.length}):</span>
+                  <span className="text-[11px] text-slate-400 font-normal">Toca para abrir detalle</span>
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {top5Cards.map((card, idx) => {
+                    const locale = card.locales.en ?? card.locales.jp
+                    const isTop = idx === 0 && card.visualScore != null && card.visualScore > 18
+                    return (
+                      <button
+                        key={card.card_code}
+                        onClick={() => setSelectedCard(card.card_code)}
+                        className={`relative rounded-xl p-2 text-left transition-all ${
+                          isTop
+                            ? 'bg-slate-800 ring-2 ring-purple-500 shadow-lg shadow-purple-900/30 hover:bg-slate-700'
+                            : 'bg-slate-800/80 hover:bg-slate-700 border border-slate-700/60'
+                        }`}
+                      >
+                        {card.visualScore != null && card.visualScore > 0 && (
+                          <span
+                            className={`absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow z-10 ${
+                              isTop ? 'bg-purple-600 text-white' : 'bg-slate-700 text-slate-300'
+                            }`}
+                          >
+                            🎯 {card.visualScore}%
+                          </span>
+                        )}
+                        {locale?.img_url ? (
+                          <img
+                            src={proxyImg(locale.img_url)!}
+                            alt={locale.name}
+                            className="w-full h-36 object-contain rounded-lg mb-1.5 bg-black/40"
+                          />
+                        ) : (
+                          <div className="w-full h-36 bg-slate-800 rounded-lg mb-1.5 flex items-center justify-center text-xl">
+                            🃏
+                          </div>
+                        )}
+                        <p className="text-xs font-mono font-bold text-yellow-400 truncate">{card.card_code}</p>
+                        <p className="text-xs text-white truncate font-medium">{locale?.name || card.card_code}</p>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* 3. SECCIÓN: OTROS TEXTOS LEÍDOS */}
             {candidates.length > 1 && (
               <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 mb-3">
                 <p className="text-slate-400 text-xs mb-2">Otros textos leídos (toca para reintentar con este):</p>
@@ -808,86 +881,40 @@ export default function ScannerPage() {
                           searchAndMatchVisual(c, capturedArtRef.current)
                         }
                       }}
-                      className="text-xs px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 flex items-center gap-1 transition-colors"
+                      className="text-xs px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-slate-300 rounded-lg border border-slate-700 flex items-center gap-1.5 transition-colors"
                     >
-                      <span className="font-mono">{c.query}</span>
+                      {c.isCode ? (
+                        <span className="text-[10px] bg-blue-600 text-white px-1 py-0.2 rounded font-mono">CÓD</span>
+                      ) : (
+                        <span className="text-[10px] bg-slate-700 text-slate-300 px-1 py-0.2 rounded">NOM</span>
+                      )}
+                      <span className="font-mono text-white font-medium">{c.query}</span>
                     </button>
                   ))}
                 </div>
               </div>
             )}
 
-            {/* Resultados cuando no hubo match 100% automático */}
-            {scanState === 'done' && (
-              <div className="mb-4">
-                {cards.length > 0 ? (
-                  <div>
-                    <p className="text-xs text-slate-400 mb-2">Cartas coincidentes:</p>
-                    <div className="grid grid-cols-2 gap-2 mb-3">
-                      {cards.map((card, idx) => {
-                        const locale = card.locales.en ?? card.locales.jp
-                        const isTop = idx === 0 && card.visualScore != null && card.visualScore > 18
-                        return (
-                          <button
-                            key={card.card_code}
-                            onClick={() => setSelectedCard(card.card_code)}
-                            className={`relative rounded-xl p-2 text-left transition-all ${
-                              isTop
-                                ? 'bg-slate-800 ring-2 ring-purple-500 shadow-lg shadow-purple-900/30 hover:bg-slate-700'
-                                : 'bg-slate-800 hover:bg-slate-700'
-                            }`}
-                          >
-                            {card.visualScore != null && card.visualScore > 0 && (
-                              <span
-                                className={`absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow z-10 ${
-                                  isTop ? 'bg-purple-600 text-white' : 'bg-slate-700 text-slate-300'
-                                }`}
-                              >
-                                🎯 {card.visualScore}%
-                              </span>
-                            )}
-                            {locale?.img_url && (
-                              <img src={proxyImg(locale.img_url)!} alt={locale.name} className="w-full rounded-lg mb-1.5" />
-                            )}
-                            <p className="text-xs font-mono font-bold text-slate-300">{card.card_code}</p>
-                            <p className="text-xs text-white truncate">{locale?.name}</p>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-slate-400 text-sm text-center mb-3">
-                    Sin resultados. Ajusta el tamaño del marco al tamaño de tu carta y vuelve a intentar.
-                  </p>
-                )}
-                <button
-                  onClick={handleScanAgain}
-                  className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold rounded-xl transition-colors shadow-lg shadow-blue-600/20"
-                >
-                  Escanear otra carta
-                </button>
-              </div>
-            )}
-
             {scanState === 'error' && (
-              <div className="text-center py-2">
-                <p className="text-red-400 text-xs mb-2">No se detectó el código con claridad. Ajusta el tamaño del marco para que encuadre bien la carta.</p>
+              <div className="text-center py-2 bg-red-950/40 border border-red-900/50 rounded-xl mb-3 p-3">
+                <p className="text-red-400 text-xs font-medium">
+                  No se detectó el código con claridad. Ajusta el tamaño del marco para encuadrar la carta y pulsa "Escanear carta ahora".
+                </p>
               </div>
             )}
 
-            {/* SECCIÓN DE DIAGNÓSTICO (DEBUG) CON UMBRALES Y COMPARACIÓN OPENCV */}
-            <details className="mt-4 bg-slate-900/90 border border-slate-800 rounded-2xl overflow-hidden shadow-lg">
+            {/* 4. SECCIÓN: DIAGNÓSTICO DEBUG DEL ESCÁNER */}
+            <details className="bg-slate-900/90 border border-slate-800 rounded-2xl overflow-hidden shadow-lg mb-4">
               <summary className="p-3.5 text-xs font-bold text-slate-300 cursor-pointer flex items-center justify-between hover:bg-slate-800/50 transition-colors">
                 <span className="flex items-center gap-2">
                   <span>🔬</span>
                   <span>Diagnóstico Visual (Debug OpenCV & OCR)</span>
                 </span>
                 <span className="text-[11px] text-blue-400 font-mono">
-                  {debugMatches.length > 0 ? `${debugMatches.length} comparadas` : 'Ver capturas'}
+                  {debugMatches.length > 0 ? `${debugMatches.length} evaluadas` : 'Ver capturas'}
                 </span>
               </summary>
-              <div className="p-4 pt-1 border-t border-slate-800 space-y-4">
+              <div className="p-4 pt-2 border-t border-slate-800 space-y-4">
                 {/* Miniaturas de captura */}
                 <div className="grid grid-cols-2 gap-3">
                   {capturedArtData && (
