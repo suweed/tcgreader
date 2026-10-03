@@ -85,10 +85,10 @@ export function getVideoGuideRect(video: HTMLVideoElement, scale = 0.86) {
   }
 }
 
-// Calibración optimizada para captura fluida con una sola mano
-const STABLE_NEEDED = 4 // Se llena al doble de velocidad (~300-350ms de calma en lugar de 700ms)
-const VARIANCE_MIN = 90 // Detecta presencia de la carta
-const MAD_MAX = 13.5 // Rango de tolerancia aumentado para micro-temblores al sostener el celular con una sola mano
+// Calibración estricta para asegurar nitidez perfecta y evitar fotos con movimiento
+const STABLE_NEEDED = 7 // Requiere ~600-700ms de calma sostenida para enfocar y centrar
+const VARIANCE_MIN = 110 // Detecta presencia de la carta
+const MAD_MAX = 7.5 // Si la mano se mueve para centrar (MAD > 7.5), NO dispara; espera a que se detenga
 
 // Códigos One Piece: OP01-001, OP16-008, EB01-061, ST01-001, P-001, PRB01-001
 // Acepta variantes OCR donde 'P' se confunde con 'F', 'B', 'Q' o '0' (ej. OF 16-008, 0P01-001)
@@ -467,23 +467,66 @@ export default function ScannerPage() {
 
   const toggleTorch = useCallback(async () => {
     try {
-      const video = webcamRef.current?.video
-      const stream = (video?.srcObject as MediaStream) || (webcamRef.current as any)?.stream
-      const track = stream?.getVideoTracks()?.[0]
-      if (!track) {
-        setTorchMsg('Cámara aún no lista')
+      // 1. Detección específica de iOS (Safari y navegadores en iOS no exponen API de linterna por política de Apple)
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+      if (isIOS) {
+        setTorchMsg('En iOS/iPhone, Apple no permite a navegadores web encender la linterna')
+        setTimeout(() => setTorchMsg(''), 4000)
+        return
+      }
+
+      let video = webcamRef.current?.video
+      let stream = (video?.srcObject as MediaStream) || (webcamRef.current as any)?.stream
+
+      // 2. Si la cámara no tiene stream activo, solicitar permisos al navegador
+      if (!stream || stream.getVideoTracks().length === 0) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: 'environment' } }
+          })
+          if (video) video.srcObject = stream
+        } catch (permErr) {
+          setTorchMsg('Permiso de cámara requerido para activar la linterna')
+          setTimeout(() => setTorchMsg(''), 3500)
+          return
+        }
+      }
+
+      const tracks = stream.getVideoTracks()
+      if (tracks.length === 0) {
+        setTorchMsg('No se encontró sensor de cámara disponible')
         setTimeout(() => setTorchMsg(''), 2500)
         return
       }
+
+      // 3. Buscar la pista que soporte 'torch' entre las cámaras traseras disponibles
+      let targetTrack: MediaStreamTrack | null = null
+      for (const track of tracks) {
+        const caps = typeof (track as any).getCapabilities === 'function' ? (track as any).getCapabilities() : null
+        if (caps && 'torch' in caps) {
+          targetTrack = track
+          break
+        }
+      }
+      if (!targetTrack) targetTrack = tracks[0]
+
       const nextState = !torchOn
-      await (track as any).applyConstraints({ advanced: [{ torch: nextState }] })
+      await (targetTrack as any).applyConstraints({
+        advanced: [{ torch: nextState }]
+      })
+
       setTorchOn(nextState)
-      setTorchMsg(nextState ? 'Linterna encendida' : 'Linterna apagada')
+      setTorchMsg(nextState ? '🔦 Linterna encendida' : 'Linterna apagada')
       setTimeout(() => setTorchMsg(''), 2500)
-    } catch (e) {
+    } catch (e: any) {
       console.warn('Torch toggle error:', e)
-      setTorchMsg('Linterna no soportada en este navegador o cámara')
-      setTimeout(() => setTorchMsg(''), 3000)
+      const msg = e?.name === 'NotAllowedError' || e?.name === 'SecurityError'
+        ? 'El navegador denegó el permiso para la linterna'
+        : e?.name === 'OverconstrainedError'
+        ? 'Tu cámara trasera no expone el flash al navegador web'
+        : 'Linterna no soportada en este navegador o dispositivo'
+      setTorchMsg(msg)
+      setTimeout(() => setTorchMsg(''), 3500)
     }
   }, [torchOn])
 
@@ -1012,6 +1055,9 @@ export default function ScannerPage() {
       capturedArtRef.current = artCanvas
       setCapturedArtData(artCanvas.toDataURL('image/jpeg', 0.85))
       setCapturedTextData(textImg)
+      try {
+        video.pause()
+      } catch {}
 
       const ocrResult = await api.ocr(textImg)
       const { text } = ocrResult
@@ -1252,6 +1298,29 @@ export default function ScannerPage() {
                 onLoadedMetadata={syncSize}
               />
               <canvas ref={overlayRef} className="absolute inset-0 w-full h-full pointer-events-none" />
+
+              {/* Bloqueo y animación de búsqueda activa: avisa que la foto ya fue tomada y se procesa */}
+              {!isCovered && (scanState === 'scanning' || scanState === 'matching') && (
+                <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm z-20 flex flex-col items-center justify-center p-6 text-center animate-fade-in pointer-events-auto">
+                  <div className="relative w-20 h-20 mb-4 flex items-center justify-center">
+                    <div className="absolute inset-0 rounded-full border-4 border-blue-500/20 border-t-blue-500 animate-spin" />
+                    <div className="w-14 h-14 rounded-2xl bg-blue-600/30 text-blue-300 flex items-center justify-center text-2xl shadow-lg">
+                      {scanState === 'scanning' ? '📸' : '🔍'}
+                    </div>
+                  </div>
+                  <h3 className="text-white font-bold text-lg mb-1">
+                    {scanState === 'scanning' ? '¡Foto capturada!' : 'Buscando coincidencias…'}
+                  </h3>
+                  <p className="text-blue-300 text-xs font-medium max-w-xs mb-2 animate-pulse">
+                    {scanState === 'scanning'
+                      ? 'Analizando código y texto con IA…'
+                      : batchProgress || 'Comparando ilustración con OpenCV…'}
+                  </p>
+                  <span className="text-[11px] text-slate-400">
+                    Cámara congelada mientras se procesa la carta
+                  </span>
+                </div>
+              )}
 
               {/* Cubierta de cámara cuando se completa el escaneo para detener detecciones y ahorrar peticiones */}
               {isCovered && (
