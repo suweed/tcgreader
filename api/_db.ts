@@ -90,12 +90,20 @@ async function getSqliteDb() {
 
 export async function query(text: string, params: unknown[] = []): Promise<{ rows: any[]; rowCount: number }> {
   if (getDbMode() === 'postgres') {
-    const p = getPool()
-    const res = await p.query(text, params)
-    return { rows: res.rows, rowCount: res.rowCount ?? res.rows.length }
+    try {
+      const p = getPool()
+      const res = await p.query(text, params)
+      return { rows: res.rows, rowCount: res.rowCount ?? res.rows.length }
+    } catch (pgErr: any) {
+      if (!process.env.VERCEL) {
+        console.warn('[DB] Falló conexión a Postgres en local, usando fallback SQLite:', pgErr.message)
+      } else {
+        throw pgErr
+      }
+    }
   }
 
-  // Fallback SQLite local si no hay DATABASE_URL configurado
+  // Fallback SQLite local si no hay DATABASE_URL configurado o si Postgres no responde en local
   const db = await getSqliteDb()
   const { cleanSql, mappedParams } = cleanSqlAndParamsForSqlite(text, params)
   const stmt = db.prepare(cleanSql)

@@ -281,9 +281,8 @@ export default function ScannerPage() {
   const loopActiveRef = useRef(false)
   const isScanningRef = useRef(false)
 
-  // Escala adaptable del marco de la carta (por defecto 72% de la pantalla)
-  const [frameScale, setFrameScale] = useState(0.72)
-  const frameScaleRef = useRef(0.72)
+  // Tamaño de marco fijo con proporción física One Piece (63 mm × 88 mm)
+  const DEFAULT_CARD_SCALE = 0.74
 
   const [cameraOn, setCameraOn] = useState(false)
   const [cvReady, setCvReady] = useState(false)
@@ -299,12 +298,6 @@ export default function ScannerPage() {
   const [capturedTextData, setCapturedTextData] = useState<string | null>(null)
   const [debugMatches, setDebugMatches] = useState<DebugMatchInfo[]>([])
   const [debugError, setDebugError] = useState<string>('')
-
-  // Sincronizar referencia de escala y redibujar esquinas
-  useEffect(() => {
-    frameScaleRef.current = frameScale
-    drawOverlay(scanState === 'detecting' ? '#facc15' : scanState === 'scanning' ? '#22c55e' : '#64748b')
-  }, [frameScale])
 
   // Precargar OpenCV en segundo plano al iniciar la cámara
   useEffect(() => {
@@ -323,8 +316,8 @@ export default function ScannerPage() {
     const W = canvas.width
     const H = canvas.height
 
-    // Marco proporcional exacto 63 mm × 88 mm según la escala del usuario
-    const guide = getGuideRect(W, H, frameScaleRef.current)
+    // Marco proporcional exacto 63 mm × 88 mm
+    const guide = getGuideRect(W, H, DEFAULT_CARD_SCALE)
     const { x, y, w, h } = guide
     const r = 16
     const cornerLen = Math.max(22, Math.round(w * 0.14))
@@ -427,7 +420,7 @@ export default function ScannerPage() {
     if (!ctx) return null
     ctx.drawImage(video, 0, 0, W, H)
 
-    const guide = getGuideRect(W, H, frameScaleRef.current)
+    const guide = getGuideRect(W, H, DEFAULT_CARD_SCALE)
     const { data } = ctx.getImageData(guide.x, guide.y, guide.w, guide.h)
 
     const lums: number[] = []
@@ -608,7 +601,7 @@ export default function ScannerPage() {
     setDebugError('')
 
     try {
-      const { textImg, artCanvas } = captureZones(video, frameScaleRef.current)
+      const { textImg, artCanvas } = captureZones(video, DEFAULT_CARD_SCALE)
       capturedArtRef.current = artCanvas
       setCapturedArtData(artCanvas.toDataURL('image/jpeg', 0.85))
       setCapturedTextData(textImg)
@@ -788,7 +781,7 @@ export default function ScannerPage() {
             </div>
             <h2 className="text-white font-bold text-lg mb-2">Escáner con IA y Visión Computarizada</h2>
             <p className="text-slate-400 text-sm mb-6 max-w-xs mx-auto">
-              Centra la carta entre las 4 esquinas. Puedes adaptar el tamaño del marco arrastrando o usando el control deslizable.
+              Centra la carta entre las 4 esquinas del marco para escanear.
             </p>
             <button
               onClick={() => setCameraOn(true)}
@@ -800,37 +793,6 @@ export default function ScannerPage() {
           </div>
         ) : (
           <>
-            {/* Control deslizante de tamaño adaptable del marco */}
-            <div className="flex items-center gap-2 bg-slate-900/90 border border-slate-800 rounded-xl px-3 py-2 mb-2 shadow-sm">
-              <span className="text-xs text-slate-400 font-medium whitespace-nowrap">📐 Tamaño marco:</span>
-              <button
-                onClick={() => setFrameScale((s) => Math.max(0.42, Number((s - 0.08).toFixed(2))))}
-                className="w-7 h-7 flex items-center justify-center bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-white rounded-lg text-sm font-bold transition-colors"
-                title="Reducir tamaño del marco"
-              >
-                −
-              </button>
-              <input
-                type="range"
-                min="0.42"
-                max="0.90"
-                step="0.02"
-                value={frameScale}
-                onChange={(e) => setFrameScale(parseFloat(e.target.value))}
-                className="flex-1 accent-yellow-500 cursor-pointer h-1.5 bg-slate-700 rounded-lg"
-              />
-              <button
-                onClick={() => setFrameScale((s) => Math.min(0.90, Number((s + 0.08).toFixed(2))))}
-                className="w-7 h-7 flex items-center justify-center bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-white rounded-lg text-sm font-bold transition-colors"
-                title="Aumentar tamaño del marco"
-              >
-                +
-              </button>
-              <span className="text-xs font-mono text-yellow-400 w-8 text-right font-semibold">
-                {Math.round(frameScale * 100)}%
-              </span>
-            </div>
-
             {/* Cámara + marco con SOLO las 4 esquinas y la línea guía OCR */}
             <div className="relative rounded-2xl overflow-hidden bg-black mb-3 shadow-xl border border-slate-800">
               <Webcam
