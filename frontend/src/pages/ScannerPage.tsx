@@ -57,12 +57,29 @@ const CARD_TYPES = new Set([
 ])
 const CARD_TYPE_PREFIXES = ['CHARAC', 'LEADER', 'NATION', 'ATTRIB', 'TRIGGE', 'COUNTE', 'mination', 'ano', 'SPECIAL', 'SLASH', 'STRIKE']
 
+// Palabras clave de reglas y efectos para no confundir párrafos de habilidades con el nombre del personaje
+const EFFECT_KEYWORDS = new Set([
+  'ACTIVATE', 'MAIN', 'ONCE', 'TURN', 'YOU', 'MAY', 'TRASH', 'THIS',
+  'CHARACTER', 'CHARACTERS', 'GIVE', 'OPPONENT', 'OPPONENTS', 'RESTED', 'ACTIVE',
+  'DON', 'DON!!', 'DONII', 'COUNTER', 'TRIGGER', 'BLOCKER', 'PLAY',
+  'WHEN', 'ATTACKING', 'ON', 'BATTLE', 'LIFE', 'DECK', 'HAND', 'COST',
+  'POWER', 'STRIKE', 'SLASH', 'SPECIAL', 'WISDOM', 'RANGED', 'STAGE',
+  'LEADER', 'EVENT', 'TYPE', 'ATTRIBUTE', 'CARD', 'CARDS', 'TARGET',
+  'DRAW', 'RETURN', 'PLACE', 'REST', 'UP', 'TO', 'AFFILIATIONS',
+  'EAST', 'BLUE', 'BLACK', 'CAT', 'PIRATES', 'STRAW', 'HAT', 'NAVY',
+  'FISH', 'MAN', 'ANIME', 'TOEI', 'ANIMATION', 'BANDAI', 'MADE',
+  'JAPAN', 'EIICHIRO', 'ODA', 'SHUEISHA'
+])
+
 function cleanOcrString(raw: string): string {
   return raw
-    .replace(/\b0P(?=\d)/gi, 'OP')
-    .replace(/\bS[7T](?=\d)/gi, 'ST')
-    .replace(/\bEB(?=\d)/gi, 'EB')
-    .replace(/\bPRB(?=\d)/gi, 'PRB')
+    .replace(/\b[0O]P(?=\d|[ -])/gi, 'OP')
+    .replace(/\bOP[oO](?=\d)/gi, 'OP0')
+    .replace(/\bS[7T](?=\d|[ -])/gi, 'ST')
+    .replace(/\bEB(?=\d|[ -])/gi, 'EB')
+    .replace(/\bPRB(?=\d|[ -])/gi, 'PRB')
+    .replace(/\b(OP|ST|EB|PRB|P)[ -]?(\d{1,3})[ -]+(\d{2,3})/gi, '$1$2-$3')
+    .replace(/\b(OP|ST|EB|PRB)(\d{2})(\d{3})\b/gi, '$1$2-$3')
     .replace(/([A-Z0-9]{1,4})\s*[-–—._/]\s*(\d{2,3})/gi, '$1-$2')
 }
 
@@ -73,6 +90,9 @@ function normalizeFoundCode(raw: string): string {
     .replace(/[–—._/]/g, '-')
     .replace(/^0P/i, 'OP')
     .replace(/^S[7T]/i, 'ST')
+
+  // Limpiar rareza pegada al final (ej. OP02-028C, OP05-083R -> OP02-028, OP05-083)
+  c = c.replace(/(?:_?)(?:SEC|SR|UC|SP|C|R|L)$/i, '')
 
   // Casos donde el OCR no leyó el guión (ej. OP15083 -> OP15-083)
   const m = c.match(/^(OP|ST|EB|PRB)(\d{2})(\d{3})$/i)
@@ -87,8 +107,8 @@ function parseOcrText(raw: string): { candidates: { query: string; isCode: boole
   const seen = new Set<string>()
 
   const add = (q: string, isCode: boolean) => {
-    const k = q.toLowerCase()
-    if (q.length >= 2 && !seen.has(k)) {
+    const k = q.toLowerCase().replace(/[^a-z0-9]/g, '')
+    if (k.length >= 2 && !seen.has(k)) {
       seen.add(k)
       result.push({ query: q, isCode })
     }
@@ -106,33 +126,39 @@ function parseOcrText(raw: string): { candidates: { query: string; isCode: boole
   }
 
   // 2. Líneas de texto para nombre del personaje
-  const lines = raw
-    .split('\n')
-    .map((l) =>
-      l
-        .replace(/[^a-zA-Z0-9\u00C0-\u024F\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF65-\uFF9F &.'\-_()']/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-    )
-    .filter((l) => l.length >= 2)
-    .filter((l) => {
-      const up = l.toUpperCase().replace(/\s+/g, '')
-      return (
-        !CARD_TYPES.has(l.toUpperCase().trim()) &&
-        !CARD_TYPE_PREFIXES.some((p) => up.startsWith(p)) &&
-        !/©|Toei|Animation|Bandai|Japan|^\d+$/.test(l) &&
-        !/^\d{4,5}$/.test(l.trim())
-      )
-    })
+  const rawLines = raw.split('\n')
+  for (const line of rawLines) {
+    const trimmed = line
+      .replace(/[^a-zA-Z0-9\u00C0-\u024F\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF65-\uFF9F &.'\-_()']/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
 
-  lines.forEach((l, i) => {
-    if (i >= 3) return
-    add(l, false)
-    const stripped = l.replace(/[.'\-_()']/g, ' ').replace(/\s+/g, ' ').trim()
-    if (stripped !== l) add(stripped, false)
-  })
+    if (trimmed.length < 2 || trimmed.length > 35) continue
 
-  return { candidates: result.slice(0, 5) }
+    const upper = trimmed.toUpperCase()
+    // Descartar si es código (ya procesado en paso 1)
+    if (CODE_RE.test(trimmed) || PROMO_RE.test(trimmed)) continue
+    // Descartar tipo de carta o cabecera
+    if (CARD_TYPES.has(upper) || CARD_TYPE_PREFIXES.some((p) => upper.startsWith(p))) continue
+    // Descartar editorial / copyright / país
+    if (/©|TOEI|ANIMATION|BANDAI|JAPAN|SHUEISHA|EIICHIRO|NOT FOR SALE/i.test(trimmed)) continue
+    // Descartar números puros (poder, coste, etc.)
+    if (/^\d+$/.test(trimmed)) continue
+
+    // Descartar si contiene palabras típicas de reglas/efectos
+    const words = upper.split(/\s+/).map((w) => w.replace(/'S$/, '').replace(/[^A-Z0-9]/g, ''))
+    const effectWords = words.filter((w) => EFFECT_KEYWORDS.has(w))
+    if (effectWords.length > 0 && (words.length >= 3 || effectWords.length >= words.length * 0.35)) continue
+    if (words.some((w) => ['OPPONENT', 'CHARACTER', 'CHARACTERS', 'CARD', 'CARDS', 'RESTED', 'DON'].includes(w))) continue
+
+    add(trimmed, false)
+    const stripped = trimmed.replace(/[.'\-_()']/g, ' ').replace(/\s+/g, ' ').trim()
+    if (stripped !== trimmed && stripped.length >= 2) {
+      add(stripped, false)
+    }
+  }
+
+  return { candidates: result.slice(0, 8) }
 }
 
 function enhanceContrast(ctx: CanvasRenderingContext2D, width: number, height: number) {
@@ -165,23 +191,55 @@ function captureZones(video: HTMLVideoElement, scale = 0.72): { textImg: string;
   aCtx.imageSmoothingQuality = 'high'
   aCtx.drawImage(video, guide.x, guide.y, guide.w, guide.h, 0, 0, 300, 419)
 
-  // 2. Franja inferior (Nombre + Código en esquina derecha, 28% inferior de la carta)
-  const ty = Math.floor(guide.y + guide.h * 0.72)
-  const th = Math.floor(guide.h * 0.28)
-  const tx = Math.floor(guide.x + guide.w * 0.02)
-  const tw = Math.floor(guide.w * 0.96)
-  const SCALE = 2.5
+  // 2. Extracción enfocado para OCR:
+  // Zona A: ID / Código en esquina inferior derecha (x: 54% a 98%, y: 82% a 98%)
+  // Con magnificación 4.0x para que los caracteres pequeños (OP02-028, OP01-025, etc.) sean nítidos
+  const codeSrcX = Math.floor(guide.x + guide.w * 0.54)
+  const codeSrcY = Math.floor(guide.y + guide.h * 0.82)
+  const codeSrcW = Math.floor(guide.w * 0.44)
+  const codeSrcH = Math.floor(guide.h * 0.16)
+
+  const CODE_ZOOM = 4.0
+  const codeDstW = Math.floor(codeSrcW * CODE_ZOOM)
+  const codeDstH = Math.floor(codeSrcH * CODE_ZOOM)
+
+  // Zona B: Franja de Nombre del Personaje (x: 6% a 94%, y: 75% a 88%)
+  // Corta estrictamente por debajo del párrafo de efectos (que termina en ~74%) y por encima del copyright
+  const nameSrcX = Math.floor(guide.x + guide.w * 0.06)
+  const nameSrcY = Math.floor(guide.y + guide.h * 0.75)
+  const nameSrcW = Math.floor(guide.w * 0.88)
+  const nameSrcH = Math.floor(guide.h * 0.14)
+
+  const NAME_ZOOM = 2.5
+  const nameDstW = Math.floor(nameSrcW * NAME_ZOOM)
+  const nameDstH = Math.floor(nameSrcH * NAME_ZOOM)
+
+  // Canvas compuesto: Apila la Zona de Código (arriba, súper ampliada) y la Zona de Nombre (abajo)
+  const sep = 16
+  const totalW = Math.max(codeDstW, nameDstW)
+  const totalH = codeDstH + nameDstH + sep
 
   const textCanvas = document.createElement('canvas')
-  textCanvas.width = Math.floor(tw * SCALE)
-  textCanvas.height = Math.floor(th * SCALE)
+  textCanvas.width = totalW
+  textCanvas.height = totalH
   const tCtx = textCanvas.getContext('2d')!
   tCtx.imageSmoothingEnabled = true
   tCtx.imageSmoothingQuality = 'high'
   tCtx.fillStyle = '#ffffff'
-  tCtx.fillRect(0, 0, textCanvas.width, textCanvas.height)
-  tCtx.drawImage(video, tx, ty, tw, th, 0, 0, textCanvas.width, textCanvas.height)
-  enhanceContrast(tCtx, textCanvas.width, textCanvas.height)
+  tCtx.fillRect(0, 0, totalW, totalH)
+
+  // Dibujar Código ampliado 4x arriba
+  tCtx.drawImage(video, codeSrcX, codeSrcY, codeSrcW, codeSrcH, 0, 0, codeDstW, codeDstH)
+
+  // Separador blanco
+  tCtx.fillStyle = '#ffffff'
+  tCtx.fillRect(0, codeDstH, totalW, sep)
+
+  // Dibujar Nombre abajo
+  tCtx.drawImage(video, nameSrcX, nameSrcY, nameSrcW, nameSrcH, 0, codeDstH + sep, nameDstW, nameDstH)
+
+  // Realzar contraste para maximizar legibilidad en Google Cloud Vision
+  enhanceContrast(tCtx, totalW, totalH)
 
   return {
     textImg: textCanvas.toDataURL('image/jpeg', 0.95),
@@ -316,29 +374,40 @@ export default function ScannerPage() {
     ctx.lineTo(x, y + h - cornerLen)
     ctx.stroke()
 
-    // 3. Línea guía para la franja de nombre / OCR (al ~73% de la altura)
-    const nameLineY = Math.round(y + h * 0.73)
-    ctx.strokeStyle = 'rgba(250, 204, 21, 0.65)'
+    // 3. Línea guía para la franja de nombre (al ~75% de la altura de la carta)
+    const nameLineY = Math.round(y + h * 0.75)
+    ctx.strokeStyle = 'rgba(250, 204, 21, 0.70)'
     ctx.lineWidth = 1.5
     ctx.setLineDash([5, 4])
     ctx.beginPath()
     ctx.moveTo(x + 10, nameLineY)
-    ctx.lineTo(x + w - 10, nameLineY)
+    ctx.lineTo(x + Math.round(w * 0.52), nameLineY)
     ctx.stroke()
     ctx.setLineDash([])
 
     // Etiqueta discreta encima de la línea de nombre
-    ctx.fillStyle = 'rgba(250, 204, 21, 0.85)'
+    ctx.fillStyle = 'rgba(250, 204, 21, 0.90)'
     ctx.font = `600 ${Math.max(9, Math.round(w * 0.03))}px sans-serif`
-    ctx.fillText('Línea de nombre / OCR ───', x + 12, nameLineY - 5)
+    ctx.fillText('Línea de Nombre ───', x + 12, nameLineY - 5)
 
-    // 4. Indicador sutil de código en esquina inferior derecha
-    const codeIndicatorX = x + w - cornerLen - 4
-    const codeIndicatorY = y + h - 8
-    ctx.fillStyle = color === '#22c55e' ? 'rgba(34, 197, 94, 0.9)' : 'rgba(250, 204, 21, 0.85)'
-    ctx.font = `600 ${Math.max(9, Math.round(w * 0.03))}px sans-serif`
+    // 4. Recuadro guía en esquina inferior derecha para el Nº / ID de Carta (OPxx-xxx)
+    const codeBoxX = Math.round(x + w * 0.54)
+    const codeBoxY = Math.round(y + h * 0.82)
+    const codeBoxW = Math.round(w * 0.44)
+    const codeBoxH = Math.round(h * 0.16)
+    const codeR = 6
+
+    ctx.strokeStyle = color === '#22c55e' ? 'rgba(34, 197, 94, 0.9)' : 'rgba(96, 165, 250, 0.80)'
+    ctx.lineWidth = 1.5
+    ctx.setLineDash([4, 3])
+    drawRoundRect(ctx, codeBoxX, codeBoxY, codeBoxW, codeBoxH, codeR)
+    ctx.stroke()
+    ctx.setLineDash([])
+
+    ctx.fillStyle = color === '#22c55e' ? 'rgba(34, 197, 94, 0.95)' : 'rgba(96, 165, 250, 0.95)'
+    ctx.font = `bold ${Math.max(9, Math.round(w * 0.028))}px monospace`
     ctx.textAlign = 'right'
-    ctx.fillText('Nº Carta ➔', codeIndicatorX, codeIndicatorY)
+    ctx.fillText('🔍 Nº Carta (ID)', codeBoxX + codeBoxW - 4, codeBoxY - 4)
     ctx.textAlign = 'left'
   }, [scanState])
 
@@ -437,33 +506,47 @@ export default function ScannerPage() {
           return
         }
 
-        // CASO 2: Hay múltiples variantes (ej. regular vs alt-art / manga) -> Comparar con OpenCV
-        const cv = await loadOpenCV()
+        // CASO 2: Hay múltiples variantes (ej. regular vs alt-art / manga) -> Comparar con OpenCV si está listo
+        let cv: any = null
+        try {
+          cv = await loadOpenCV()
+        } catch (cvErr) {
+          console.warn('[OpenCV] No disponible o aún cargando en segundo plano:', cvErr)
+        }
+
         const scored: ScoredCard[] = []
 
-        for (const card of found.slice(0, 8)) {
-          const locale = card.locales.en ?? card.locales.jp
-          const imgUrl = locale?.img_url ? proxyImg(locale.img_url) : null
-          if (!imgUrl) {
-            scored.push({ ...card, visualScore: 0, visualMatches: 0 })
-            continue
+        if (cv) {
+          for (const card of found.slice(0, 8)) {
+            const locale = card.locales.en ?? card.locales.jp
+            const imgUrl = locale?.img_url ? proxyImg(locale.img_url) : null
+            if (!imgUrl) {
+              scored.push({ ...card, visualScore: 0, visualMatches: 0 })
+              continue
+            }
+
+            try {
+              const imgEl = await preloadImage(imgUrl)
+              const result = compareWithORB(cv, artCanvas, imgEl)
+              scored.push({
+                ...card,
+                visualScore: result.score,
+                visualMatches: result.matches,
+              })
+            } catch {
+              scored.push({ ...card, visualScore: 0, visualMatches: 0 })
+            }
           }
 
-          try {
-            const imgEl = await preloadImage(imgUrl)
-            const result = compareWithORB(cv, artCanvas, imgEl)
-            scored.push({
-              ...card,
-              visualScore: result.score,
-              visualMatches: result.matches,
-            })
-          } catch {
+          // Ordenar de mayor a menor coincidencia visual
+          scored.sort((a, b) => (b.visualScore ?? 0) - (a.visualScore ?? 0))
+        } else {
+          // Si OpenCV no está disponible aún, mostrar las cartas encontradas en la BD
+          for (const card of found) {
             scored.push({ ...card, visualScore: 0, visualMatches: 0 })
           }
         }
 
-        // Ordenar de mayor a menor coincidencia visual
-        scored.sort((a, b) => (b.visualScore ?? 0) - (a.visualScore ?? 0))
         setCards(scored)
 
         // Registrar datos de diagnóstico visual para depuración
@@ -487,11 +570,11 @@ export default function ScannerPage() {
         const runnerScore = runnerUp?.visualScore ?? 0
 
         // Criterio de certeza visual:
-        // Si el mejor puntaje es sólido (>= 30%) o supera al segundo con clara ventaja (>= 18% y +25% que el segundo)
-        const isCertain = bestScore >= 30 || (bestScore >= 18 && bestScore >= runnerScore * 1.25)
+        // Si el mejor puntaje es sólido (>= 28%) o supera al segundo con clara ventaja (>= 18% y +25% que el segundo)
+        const isCertain = bestScore >= 28 || (bestScore >= 18 && bestScore >= runnerScore * 1.25)
 
-        if (isCertain && best) {
-          // Coincidencia segura: Mostrar directamente el modal de la carta detectada
+        // Si fue una búsqueda por CÓDIGO (ej. OP02-028) o la certeza visual es alta:
+        if (candidate.isCode || (isCertain && best)) {
           setSelectedCard(best.card_code)
         }
 

@@ -7,75 +7,108 @@
 let cvPromise: Promise<any> | null = null
 
 /**
- * Loads OpenCV.js dynamically via WebAssembly from a reliable CDN.
+ * Loads OpenCV.js dynamically via WebAssembly from a reliable CDN with fallback.
  */
 export function loadOpenCV(): Promise<any> {
   if (typeof window === 'undefined') {
-    return Promise.reject(new Error('Window not available'))
+    return Promise.reject(new Error('Window no disponible'))
   }
 
-  // Already loaded
-  if ((window as any).cv && (window as any).cv.Mat) {
+  // Ya cargado y listo
+  if ((window as any).cv && typeof (window as any).cv.Mat === 'function') {
     return Promise.resolve((window as any).cv)
   }
 
   if (cvPromise) return cvPromise
 
   cvPromise = new Promise((resolve, reject) => {
-    // Check if script tag already exists
-    const existing = document.querySelector('script[data-opencv]')
-    if (existing) {
-      if ((window as any).cv && (window as any).cv.Mat) {
-        return resolve((window as any).cv)
-      }
-    }
+    const CDNS = [
+      'https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js',
+      'https://docs.opencv.org/4.x/opencv.js',
+    ]
+    let currentCdnIndex = 0
 
-    const script = document.createElement('script')
-    script.setAttribute('data-opencv', 'true')
-    script.src = 'https://docs.opencv.org/4.10.0/opencv.js'
-    script.async = true
+    const tryLoadScript = () => {
+      // Remover cualquier script opencv previo si falló
+      const prev = document.querySelector('script[data-opencv]')
+      if (prev) prev.remove()
 
-    let timeoutId: any = null
+      const src = CDNS[currentCdnIndex]
+      const script = document.createElement('script')
+      script.setAttribute('data-opencv', 'true')
+      script.src = src
+      script.async = true
 
-    const checkReady = () => {
-      if ((window as any).cv && (window as any).cv.Mat) {
-        if (timeoutId) clearTimeout(timeoutId)
-        resolve((window as any).cv)
-        return true
-      }
-      return false
-    }
+      let pollInterval: any = null
+      let timeoutId: any = null
 
-    script.onload = () => {
-      if (checkReady()) return
-
-      // OpenCV initializes asynchronously in WebAssembly
-      if ((window as any).cv) {
-        (window as any).cv.onRuntimeInitialized = () => {
+      const checkReady = () => {
+        const cv = (window as any).cv
+        if (cv && typeof cv.Mat === 'function') {
+          if (pollInterval) clearInterval(pollInterval)
           if (timeoutId) clearTimeout(timeoutId)
-          resolve((window as any).cv)
+          resolve(cv)
+          return true
+        }
+        return false
+      }
+
+      const onFail = () => {
+        if (pollInterval) clearInterval(pollInterval)
+        if (timeoutId) clearTimeout(timeoutId)
+        currentCdnIndex++
+        if (currentCdnIndex < CDNS.length) {
+          console.warn(`[OpenCV] Reintentando carga desde CDN alternativo: ${CDNS[currentCdnIndex]}`)
+          tryLoadScript()
+        } else {
+          cvPromise = null // Permitir reintento en el siguiente escaneo
+          reject(new Error('No se pudo cargar OpenCV.js'))
         }
       }
 
-      const poll = setInterval(() => {
-        if (checkReady()) {
-          clearInterval(poll)
-        }
-      }, 50)
+      script.onload = () => {
+        if (checkReady()) return
 
-      timeoutId = setTimeout(() => {
-        clearInterval(poll)
-        if (!checkReady()) {
-          reject(new Error('Tiempo de espera agotado al cargar OpenCV.js'))
+        const cv = (window as any).cv
+        if (cv) {
+          if (typeof cv.then === 'function') {
+            cv.then((readyCv: any) => {
+              (window as any).cv = readyCv
+              if (pollInterval) clearInterval(pollInterval)
+              if (timeoutId) clearTimeout(timeoutId)
+              resolve(readyCv)
+            }).catch(onFail)
+            return
+          }
+
+          cv.onRuntimeInitialized = () => {
+            if (pollInterval) clearInterval(pollInterval)
+            if (timeoutId) clearTimeout(timeoutId)
+            resolve(cv)
+          }
         }
-      }, 15000)
+
+        pollInterval = setInterval(() => {
+          if (checkReady()) {
+            clearInterval(pollInterval)
+          }
+        }, 80)
+
+        timeoutId = setTimeout(() => {
+          if (!checkReady()) {
+            onFail()
+          }
+        }, 12000)
+      }
+
+      script.onerror = () => {
+        onFail()
+      }
+
+      document.head.appendChild(script)
     }
 
-    script.onerror = () => {
-      reject(new Error('No se pudo descargar OpenCV.js'))
-    }
-
-    document.head.appendChild(script)
+    tryLoadScript()
   })
 
   return cvPromise
