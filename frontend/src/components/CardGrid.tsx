@@ -218,14 +218,26 @@ export default function CardGrid({ initialFilters = {}, showOwnedToggle = true, 
 
             <select
               onChange={(e) => handleFilter('sort', e.target.value)}
+              value={filters.sort ?? (collectionMode ? 'newest' : '')}
               className={selectClass + ' ml-auto'}
             >
-              <option value="">Set A→Z</option>
-              <option value="set_desc">Set Z→A</option>
-              <option value="name_asc">Nombre A→Z</option>
-              <option value="name_desc">Nombre Z→A</option>
-              {collectionMode && <option value="newest">Agregadas: más recientes</option>}
-              {collectionMode && <option value="oldest">Agregadas: más antiguas</option>}
+              {collectionMode ? (
+                <>
+                  <option value="newest">Agregadas: más recientes</option>
+                  <option value="oldest">Agregadas: más antiguas</option>
+                  <option value="">Set A→Z</option>
+                  <option value="set_desc">Set Z→A</option>
+                  <option value="name_asc">Nombre A→Z</option>
+                  <option value="name_desc">Nombre Z→A</option>
+                </>
+              ) : (
+                <>
+                  <option value="">Set A→Z</option>
+                  <option value="set_desc">Set Z→A</option>
+                  <option value="name_asc">Nombre A→Z</option>
+                  <option value="name_desc">Nombre Z→A</option>
+                </>
+              )}
             </select>
           </div>
 

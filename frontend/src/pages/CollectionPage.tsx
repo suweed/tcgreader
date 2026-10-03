@@ -80,7 +80,7 @@ export default function CollectionPage() {
         </div>
       )}
 
-      <CardGrid initialFilters={{ owned: 'true' }} showOwnedToggle={false} collectionMode={true} />
+      <CardGrid initialFilters={{ owned: 'true', sort: 'newest' }} showOwnedToggle={false} collectionMode={true} />
     </div>
   )
 }

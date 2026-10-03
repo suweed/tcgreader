@@ -294,10 +294,10 @@ async function handleCards(req: VercelRequest, res: VercelResponse, segments: st
   const whereSQL = where.length > 0 ? 'WHERE ' + where.join(' AND ') : ''
 
   let orderSQL = 's.code ASC, c.card_code ASC'
-  if (sort === 'newest') {
-    orderSQL = '(SELECT MAX(added_at) FROM collection WHERE card_code = c.card_code) DESC NULLS LAST, s.code ASC, c.card_code ASC'
+  if (sort === 'newest' || (!sort && (owned === 'true' || Boolean(ownedLang)))) {
+    orderSQL = 'COALESCE(GREATEST(col_en.added_at, col_jp.added_at), col_en.added_at, col_jp.added_at, 0) DESC, s.code ASC, c.card_code ASC'
   } else if (sort === 'oldest') {
-    orderSQL = '(SELECT MAX(added_at) FROM collection WHERE card_code = c.card_code) ASC NULLS LAST, s.code ASC, c.card_code ASC'
+    orderSQL = 'COALESCE(LEAST(col_en.added_at, col_jp.added_at), col_en.added_at, col_jp.added_at, 9999999999) ASC, s.code ASC, c.card_code ASC'
   } else if (sort === 'name_asc') {
     orderSQL = 'COALESCE(en_loc.name, jp_loc.name) ASC, c.card_code ASC'
   } else if (sort === 'name_desc') {
@@ -463,7 +463,7 @@ async function handleCollection(req: VercelRequest, res: VercelResponse, segment
       JOIN cards c ON c.card_code = col.card_code
       JOIN sets s ON s.id = c.set_id
       LEFT JOIN card_locales loc ON loc.card_code = col.card_code AND loc.language = col.language
-      ORDER BY s.code ASC, col.card_code ASC, col.language ASC
+      ORDER BY col.added_at DESC, s.code ASC, col.card_code ASC
     `)
     const rows = colRes.rows.map((r: any) => ({
       ...r,
@@ -485,11 +485,12 @@ async function handleCollection(req: VercelRequest, res: VercelResponse, segment
     }
 
     await query(`
-      INSERT INTO collection (card_code, language, quantity, condition)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO collection (card_code, language, quantity, condition, added_at)
+      VALUES ($1, $2, $3, $4, EXTRACT(EPOCH FROM NOW())::BIGINT)
       ON CONFLICT(card_code, language) DO UPDATE
       SET quantity = collection.quantity + EXCLUDED.quantity,
-          condition = EXCLUDED.condition
+          condition = EXCLUDED.condition,
+          added_at = EXTRACT(EPOCH FROM NOW())::BIGINT
     `, [cardCode, language, quantity, condition])
 
     // Auto-adjuntar precio cacheado si está disponible

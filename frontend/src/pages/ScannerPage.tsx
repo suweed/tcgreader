@@ -31,11 +31,11 @@ interface DebugMatchInfo {
 // Proporciones exactas de cartas One Piece: 63 mm × 88 mm
 export const CARD_RATIO = 63 / 88 // 0.715909...
 
-export function getGuideRect(W: number, H: number, scale = 0.74) {
+export function getGuideRect(W: number, H: number, scale = 0.86) {
   let h = H * scale
   let w = h * CARD_RATIO
-  if (w > W * 0.90) {
-    w = W * 0.90
+  if (w > W * 0.92) {
+    w = W * 0.92
     h = w / CARD_RATIO
   }
   const x = Math.round((W - w) / 2)
@@ -49,7 +49,7 @@ export function getGuideRect(W: number, H: number, scale = 0.74) {
 }
 
 // Mapeo exacto entre la pantalla del usuario (CSS object-cover) y los píxeles reales del sensor de video
-export function getVideoGuideRect(video: HTMLVideoElement, scale = 0.74) {
+export function getVideoGuideRect(video: HTMLVideoElement, scale = 0.86) {
   const W_disp = video.clientWidth || 360
   const H_disp = video.clientHeight || 480
   const W_vid = video.videoWidth || W_disp
@@ -85,16 +85,17 @@ export function getVideoGuideRect(video: HTMLVideoElement, scale = 0.74) {
   }
 }
 
-// Calibración optimizada para dar tiempo de centrar el ID y evitar fotos con movimiento
-const STABLE_NEEDED = 7 // Requiere ~600-700ms de calma sostenida para enfocar y centrar
-const VARIANCE_MIN = 110 // Detecta presencia de la carta
-const MAD_MAX = 7.5 // Si la mano se mueve para centrar (MAD > 7.5), NO dispara; espera a que se detenga
+// Calibración optimizada para captura fluida con una sola mano
+const STABLE_NEEDED = 4 // Se llena al doble de velocidad (~300-350ms de calma en lugar de 700ms)
+const VARIANCE_MIN = 90 // Detecta presencia de la carta
+const MAD_MAX = 13.5 // Rango de tolerancia aumentado para micro-temblores al sostener el celular con una sola mano
 
 // Códigos One Piece: OP01-001, OP16-008, EB01-061, ST01-001, P-001, PRB01-001
 // Acepta variantes OCR donde 'P' se confunde con 'F', 'B', 'Q' o '0' (ej. OF 16-008, 0P01-001)
-const CODE_RE = /\b((?:OP|ST|EB|PRB?|P|[0O][FPBQC])\s*[-–—._/]?\s*\d{1,3}\s*[-–—._/ ]\s*\d{2,3}(?:_p\d+|_r\d+)?)\b/gi
-const CODE_NO_HYPHEN_RE = /\b((?:OP|ST|EB|PRB|[0O][FPBQC])\s*\d{2}\s*\d{3})\b/gi
-const PROMO_RE = /\b(P\s*[-–—._/ ]?\s*\d{2,3}(?:_p\d+)?)\b/gi
+// Permite dígitos de bloque (1, 2) y letras de rareza (C, UC, R, SR, SEC, L, SP) que vienen pegados al código en la carta física
+const CODE_RE = /\b((?:OP|ST|EB|PRB?|[0O][FPBQC])\s*[-–—._/]?\s*\d{1,3}\s*[-–—._/ ]\s*\d{2,4}(?:[A-Za-z]{1,4})?(?:_p\d+|_r\d+)?)\b/gi
+const CODE_NO_HYPHEN_RE = /\b((?:OP|ST|EB|PRB|[0O][FPBQC])\s*\d{2}\s*\d{3,4}(?:[A-Za-z]{1,4})?)\b/gi
+const PROMO_RE = /\b(P\s*[-–—._/ ]?\s*\d{2,4}(?:[A-Za-z]{1,4})?(?:_p\d+)?)\b/gi
 
 // Tipos y palabras reservadas a ignorar en OCR
 const CARD_TYPES = new Set([
@@ -127,10 +128,13 @@ function cleanOcrString(raw: string): string {
     .replace(/\bS[7T](?=\d|[ -])/gi, 'ST')
     .replace(/\bEB(?=\d|[ -])/gi, 'EB')
     .replace(/\bPRB(?=\d|[ -])/gi, 'PRB')
+    // Unificar promos P (ej. P 043, P 43, P043 -> P-043)
+    .replace(/\bP\s*[-–—._/ ]\s*(\d{2,4})\b/gi, 'P-$1')
+    .replace(/\bP(\d{3,4})\b/gi, 'P-$1')
     // Unificar código con separación por espacios o guiones (ej. OP 16-008, OP 16 008, OP16 - 008 -> OP16-008)
-    .replace(/\b(OP|ST|EB|PRB|P|[0O][FPBQC])\s*(\d{1,3})\s*[-–—._/ ]\s*(\d{2,3})\b/gi, '$1$2-$3')
-    .replace(/\b(OP|ST|EB|PRB|[0O][FPBQC])\s*(\d{2})(\d{3})\b/gi, '$1$2-$3')
-    .replace(/([A-Z0-9]{1,4})\s*[-–—._/]\s*(\d{2,3})/gi, '$1-$2')
+    .replace(/\b(OP|ST|EB|PRB|[0O][FPBQC])\s*(\d{1,3})\s*[-–—._/ ]\s*(\d{2,4})\b/gi, '$1$2-$3')
+    .replace(/\b(OP|ST|EB|PRB|[0O][FPBQC])\s*(\d{2})(\d{3,4})\b/gi, '$1$2-$3')
+    .replace(/([A-Z0-9]{1,4})\s*[-–—._/]\s*(\d{2,4})/gi, '$1-$2')
 }
 
 function normalizeFoundCode(raw: string): string {
@@ -141,16 +145,24 @@ function normalizeFoundCode(raw: string): string {
     .replace(/^[0O][FPBQC]/i, 'OP')
     .replace(/^S[7T]/i, 'ST')
 
-  // Limpiar rareza pegada al final (ej. OP02-028C, OP05-083R, OP16-008UC, OP01-001SEC)
-  c = c.replace(/(?:_?)(?:SEC|SR|UC|SP|C|R|L)$/i, '')
+  // Limpiar rareza pegada al final (ej. OP02-028C, OP05-083R, OP16-008UC, OP01-001SEC, P-043U)
+  c = c.replace(/(?:_?)(?:SEC|SR|UC|SP|C|R|L|U|P)$/i, '')
 
-  // Si el OCR leyó un 4to dígito espurio tras el código de 3 dígitos (ej: OP16-0080 -> OP16-008)
+  // Si el OCR leyó un 4to dígito espurio tras el código de 3 dígitos (ej: número de bloque pegado [1], [2]: OP16-0081 -> OP16-008, P-0431 -> P-043)
   c = c.replace(/^((?:OP|ST|EB|PRB)\d{2}-\d{3})\d$/i, '$1')
+  c = c.replace(/^(P-\d{3})\d$/i, '$1')
 
-  // Casos donde el OCR no leyó el guión (ej. OP15083 -> OP15-083)
+  // Si el promo se leyó con 2 dígitos (ej. P-43 -> P-043)
+  c = c.replace(/^P-(\d{2})$/i, 'P-0$1')
+
+  // Casos donde el OCR no leyó el guión (ej. OP15083 -> OP15-083, P043 -> P-043)
   const m = c.match(/^(OP|ST|EB|PRB)(\d{2})(\d{3})$/i)
   if (m) {
     c = `${m[1]}${m[2]}-${m[3]}`
+  }
+  const mp = c.match(/^P(\d{3})$/i)
+  if (mp) {
+    c = `P-${mp[1]}`
   }
   return c
 }
@@ -170,12 +182,15 @@ function parseOcrText(raw: string): { candidates: { query: string; isCode: boole
   const cleanedRaw = cleanOcrString(raw)
 
   // 1. Códigos de carta en esquina inferior derecha (máxima prioridad)
-  const codes = cleanedRaw.match(CODE_RE) || cleanedRaw.match(PROMO_RE) || cleanedRaw.match(CODE_NO_HYPHEN_RE)
-  if (codes) {
-    codes.forEach((c) => {
-      const normalized = normalizeFoundCode(c)
-      add(normalized, true)
-    })
+  // Extraer todos los códigos coincidentes sin perder ninguno por cortocircuito
+  const codeMatches = [
+    ...(cleanedRaw.match(CODE_RE) || []),
+    ...(cleanedRaw.match(PROMO_RE) || []),
+    ...(cleanedRaw.match(CODE_NO_HYPHEN_RE) || []),
+  ]
+  for (const c of codeMatches) {
+    const normalized = normalizeFoundCode(c)
+    add(normalized, true)
   }
 
   // 2. Líneas de texto para nombre del personaje
@@ -327,13 +342,13 @@ function captureZones(video: HTMLVideoElement, scale = 0.74): { textImg: string;
   // 2. Extracción enfocada para OCR:
   // Zona A: ID / Código en esquina inferior derecha
   // Ocupa del 63% al 96% horizontal y del 89% al 97.8% vertical (8.8% de altura)
-  // Zoom optimizado a 2.6x para evitar artefactos de pixelación y duplicación de números
+  // Zoom a 4.6x para que los dígitos tengan tamaño grande y nítido para OCR (~35-40px)
   const codeSrcX = Math.floor(guide.x + guide.w * 0.63)
   const codeSrcY = Math.floor(guide.y + guide.h * 0.89)
   const codeSrcW = Math.floor(guide.w * 0.33)
   const codeSrcH = Math.floor(guide.h * 0.088)
 
-  const CODE_ZOOM = 2.6
+  const CODE_ZOOM = 4.6
   const codeDstW = Math.floor(codeSrcW * CODE_ZOOM)
   const codeDstH = Math.floor(codeSrcH * CODE_ZOOM)
 
@@ -344,7 +359,8 @@ function captureZones(video: HTMLVideoElement, scale = 0.74): { textImg: string;
   const nameSrcW = Math.floor(guide.w * 0.84)
   const nameSrcH = Math.floor(guide.h * 0.13)
 
-  const NAME_ZOOM = 2.4
+  // Con 1.85x, nameDstW se iguala exactamente al ancho de la zona de código (sin espacios blancos vacíos)
+  const NAME_ZOOM = 1.85
   const nameDstW = Math.floor(nameSrcW * NAME_ZOOM)
   const nameDstH = Math.floor(nameSrcH * NAME_ZOOM)
 
@@ -362,21 +378,23 @@ function captureZones(video: HTMLVideoElement, scale = 0.74): { textImg: string;
   tCtx.fillStyle = '#ffffff'
   tCtx.fillRect(0, 0, totalW, totalH)
 
-  // Dibujar Código ampliado arriba
-  tCtx.drawImage(video, codeSrcX, codeSrcY, codeSrcW, codeSrcH, 0, 0, codeDstW, codeDstH)
+  // Dibujar Código ampliado arriba (centrado horizontalmente)
+  const codeOffsetX = Math.max(0, Math.floor((totalW - codeDstW) / 2))
+  tCtx.drawImage(video, codeSrcX, codeSrcY, codeSrcW, codeSrcH, codeOffsetX, 0, codeDstW, codeDstH)
 
   // Separador blanco
   tCtx.fillStyle = '#ffffff'
   tCtx.fillRect(0, codeDstH, totalW, sep)
 
-  // Dibujar Nombre abajo
-  tCtx.drawImage(video, nameSrcX, nameSrcY, nameSrcW, nameSrcH, 0, codeDstH + sep, nameDstW, nameDstH)
+  // Dibujar Nombre abajo (centrado horizontalmente)
+  const nameOffsetX = Math.max(0, Math.floor((totalW - nameDstW) / 2))
+  tCtx.drawImage(video, nameSrcX, nameSrcY, nameSrcW, nameSrcH, nameOffsetX, codeDstH + sep, nameDstW, nameDstH)
 
   // Realzar contraste y compensar sombras independientemente para cada zona:
   // Zona A (Código ID arriba): elimina sombras proyectadas por el celular sobre la esquina inferior
-  enhanceContrastZone(tCtx, 0, 0, codeDstW, codeDstH)
+  enhanceContrastZone(tCtx, codeOffsetX, 0, codeDstW, codeDstH)
   // Zona B (Nombre abajo): normaliza la iluminación sobre la franja de nombre
-  enhanceContrastZone(tCtx, 0, codeDstH + sep, nameDstW, nameDstH)
+  enhanceContrastZone(tCtx, nameOffsetX, codeDstH + sep, nameDstW, nameDstH)
 
   return {
     textImg: textCanvas.toDataURL('image/jpeg', 0.95),
@@ -420,7 +438,11 @@ export default function ScannerPage() {
   const isScanningRef = useRef(false)
 
   // Tamaño de marco fijo con proporción física One Piece (63 mm × 88 mm)
-  const DEFAULT_CARD_SCALE = 0.74
+  // Escala ampliada a 0.86 para acercar la carta a la lente y aumentar la resolución física del código en el sensor
+  const DEFAULT_CARD_SCALE = 0.86
+
+  const [cameraKey, setCameraKey] = useState(0)
+  const resultsRef = useRef<HTMLDivElement>(null)
 
   const [cameraOn, setCameraOn] = useState(false)
   const [cvReady, setCvReady] = useState(false)
@@ -464,6 +486,19 @@ export default function ScannerPage() {
       setTimeout(() => setTorchMsg(''), 3000)
     }
   }, [torchOn])
+
+  // Apaga físicamente las pistas de video del sensor y la linterna al cubrir la cámara
+  const stopCameraTracks = useCallback(() => {
+    try {
+      const video = webcamRef.current?.video
+      const stream = (video?.srcObject || (webcamRef.current as any)?.stream) as MediaStream | null
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop())
+      }
+      if (video) video.srcObject = null
+    } catch {}
+    setTorchOn(false)
+  }, [])
 
   // Precargar OpenCV en segundo plano al iniciar la cámara
   useEffect(() => {
@@ -694,6 +729,7 @@ export default function ScannerPage() {
           setScanState('error')
           setIsCovered(true)
           loopActiveRef.current = false
+          stopCameraTracks()
           return
         }
 
@@ -718,6 +754,7 @@ export default function ScannerPage() {
           setScanState('done')
           setIsCovered(true)
           loopActiveRef.current = false
+          stopCameraTracks()
           return
         }
 
@@ -894,36 +931,47 @@ export default function ScannerPage() {
         scored.sort((a, b) => (b.visualScore ?? 0) - (a.visualScore ?? 0))
         setCards(scored)
 
+        const best = scored[0]
+        const bestScore = best?.visualScore ?? 0
+        const secondScore = scored[1]?.visualScore ?? 0
+        const margin = bestScore - secondScore
+
+        // Regla:
+        // 1. Coincidencia directa >= 50%
+        // 2. Fallback de Ganador Dominante: score >= 38% y margen >= 12% sobre el segundo resultado (ej. 45% vs < 30%)
+        const isDominantWinner = Boolean(best && (bestScore >= 50 || (bestScore >= 38 && margin >= 12)))
+
         // Registrar datos de diagnóstico visual para depuración
-        const debugList: DebugMatchInfo[] = scored.map((c) => {
+        const debugList: DebugMatchInfo[] = scored.map((c, idx) => {
           const loc = c.locales.en ?? c.locales.jp
           const s = c.visualScore ?? 0
+          const passed = s >= 50 || (idx === 0 && isDominantWinner)
           return {
             card_code: c.card_code,
             name: loc?.name || '',
             img_url: loc?.img_url ? proxyImg(loc.img_url) : null,
             visualScore: s,
             visualMatches: c.visualMatches ?? 0,
-            passedThreshold: s >= 50,
+            passedThreshold: passed,
           }
         })
         setDebugMatches(debugList)
 
-        const best = scored[0]
-        const bestScore = best?.visualScore ?? 0
-
-        // Regla: si se encuentra alguna coincidencia con igual o más del 50%, muestra modal.
-        // Si es menor a 50%, NO abre modal y se muestran los 5 resultados más cercanos.
-        if (best && bestScore >= 50) {
+        if (isDominantWinner && best) {
           setSelectedCard(best.card_code)
         } else {
           setSelectedCard(null)
+          // Desplazar automáticamente hacia la lista de 5 opciones más cercanas
+          setTimeout(() => {
+            resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }, 250)
         }
 
         setBatchProgress('')
         setScanState('done')
         setIsCovered(true)
         loopActiveRef.current = false
+        stopCameraTracks()
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         setDebugError(msg)
@@ -931,9 +979,10 @@ export default function ScannerPage() {
         setScanState('error')
         setIsCovered(true)
         loopActiveRef.current = false
+        stopCameraTracks()
       }
     },
-    []
+    [stopCameraTracks]
   )
 
   const doScan = useCallback(async () => {
@@ -952,6 +1001,7 @@ export default function ScannerPage() {
       setScanState('error')
       setIsCovered(true)
       isScanningRef.current = false
+      stopCameraTracks()
       return
     }
 
@@ -970,6 +1020,7 @@ export default function ScannerPage() {
         setScanState('error')
         setIsCovered(true)
         isScanningRef.current = false
+        stopCameraTracks()
         return
       }
 
@@ -978,6 +1029,7 @@ export default function ScannerPage() {
         setScanState('error')
         setIsCovered(true)
         isScanningRef.current = false
+        stopCameraTracks()
         return
       }
 
@@ -992,10 +1044,11 @@ export default function ScannerPage() {
       console.error('OCR error', err)
       setScanState('error')
       setIsCovered(true)
+      stopCameraTracks()
     } finally {
       isScanningRef.current = false
     }
-  }, [searchAndMatchVisual])
+  }, [searchAndMatchVisual, stopCameraTracks])
 
   const startLoop = useCallback(() => {
     stableRef.current = 0
@@ -1092,7 +1145,11 @@ export default function ScannerPage() {
     setIsCovered(false)
     setScanState('ready')
     drawOverlay('#64748b', 0)
-    startLoop()
+    // Re-iniciar la cámara con nueva key para que monte un stream fresco
+    setCameraKey((k) => k + 1)
+    setTimeout(() => {
+      startLoop()
+    }, 350)
   }, [drawOverlay, startLoop])
 
   const statusLabel: Record<ScanState, string> = {
@@ -1182,6 +1239,7 @@ export default function ScannerPage() {
               className="relative w-full aspect-[3/4] max-h-[70vh] rounded-2xl overflow-hidden bg-black mb-3 shadow-xl border border-slate-800"
             >
               <Webcam
+                key={cameraKey}
                 ref={webcamRef}
                 screenshotFormat="image/jpeg"
                 videoConstraints={{
@@ -1199,11 +1257,11 @@ export default function ScannerPage() {
               {isCovered && (
                 <div className="absolute inset-0 bg-slate-950/85 backdrop-blur-md z-20 flex flex-col items-center justify-center p-6 text-center animate-fade-in">
                   <div className="w-16 h-16 rounded-2xl bg-blue-600/20 border border-blue-500/30 text-blue-400 flex items-center justify-center text-3xl mb-3 shadow-lg">
-                    {cards.length > 0 ? (cards[0]?.visualScore != null && cards[0].visualScore >= 50 ? '✅' : '🃏') : '⚠️'}
+                    {cards.length > 0 ? (selectedCard ? '✅' : '🃏') : '⚠️'}
                   </div>
                   <h3 className="text-white font-bold text-lg mb-1">
                     {cards.length > 0
-                      ? cards[0]?.visualScore != null && cards[0].visualScore >= 50
+                      ? selectedCard
                         ? '¡Carta Identificada!'
                         : 'Resultados Encontrados'
                       : scanState === 'error'
@@ -1212,9 +1270,9 @@ export default function ScannerPage() {
                   </h3>
                   <p className="text-slate-300 text-xs max-w-xs mb-5">
                     {cards.length > 0
-                      ? cards[0]?.visualScore != null && cards[0].visualScore >= 50
-                        ? 'Coincidencia visual ≥ 50%. Cámara pausada para ahorrar peticiones.'
-                        : 'Certeza visual < 50%. Revisa abajo las 5 opciones más cercanas.'
+                      ? selectedCard
+                        ? 'Coincidencia visual confirmada. Cámara pausada para ahorrar peticiones.'
+                        : 'Revisa abajo las 5 opciones más cercanas.'
                       : 'Asegúrate de que la carta esté bien iluminada y centrada entre las 4 esquinas.'}
                   </p>
                   <button
@@ -1296,27 +1354,27 @@ export default function ScannerPage() {
 
             {/* 2. SECCIÓN: 5 RESULTADOS MÁS CERCANOS */}
             {top5Cards.length > 0 && (
-              <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 mb-3 shadow">
+              <div ref={resultsRef} className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 mb-3 shadow">
                 <div className="mb-2.5 flex items-center justify-between">
                   <p className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
                     <span>🎯</span>
                     <span>
-                      {cards[0]?.visualScore != null && cards[0].visualScore >= 50
+                      {selectedCard
                         ? `Mejores coincidencias (${top5Cards.length}):`
-                        : `5 resultados más cercanos (< 50% de certeza):`}
+                        : `5 resultados más cercanos:`}
                     </span>
                   </p>
                   <span className="text-[11px] text-slate-400">Toca para abrir detalle</span>
                 </div>
-                {cards[0]?.visualScore != null && cards[0].visualScore < 50 && (
+                {!selectedCard && (
                   <div className="bg-yellow-950/40 border border-yellow-800/50 rounded-lg p-2.5 mb-3 text-xs text-yellow-300">
-                    ⚠️ Ninguna opción superó el 50% de certeza visual. Aquí están las 5 más cercanas encontradas:
+                    ⚠️ No hubo coincidencia definitiva directa. Aquí están las 5 opciones más cercanas:
                   </div>
                 )}
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {top5Cards.map((card, idx) => {
                     const locale = card.locales.en ?? card.locales.jp
-                    const isTop = idx === 0 && card.visualScore != null && card.visualScore >= 50
+                    const isTop = idx === 0 && selectedCard === card.card_code
                     return (
                       <button
                         key={card.card_code}
@@ -1332,6 +1390,8 @@ export default function ScannerPage() {
                             className={`absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow z-10 ${
                               card.visualScore >= 50
                                 ? 'bg-green-600 text-white'
+                                : (idx === 0 && selectedCard === card.card_code)
+                                ? 'bg-emerald-600 text-white'
                                 : card.visualScore >= 25
                                 ? 'bg-yellow-600 text-white'
                                 : 'bg-slate-700 text-slate-300'
