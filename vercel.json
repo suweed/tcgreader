@@ -2,8 +2,10 @@
   "buildCommand": "if [ -d frontend ]; then cd frontend && npm install && npm run build; else npm install && npm run build; fi",
   "outputDirectory": "frontend/dist",
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/index.ts" },
-    { "source": "/tcg_read/api/(.*)", "destination": "/api/index.ts" },
+    { "source": "/api", "destination": "/api?__endpoint=/" },
+    { "source": "/api/", "destination": "/api?__endpoint=/" },
+    { "source": "/api/(.*)", "destination": "/api?__endpoint=/$1" },
+    { "source": "/tcg_read/api/(.*)", "destination": "/api?__endpoint=/$1" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

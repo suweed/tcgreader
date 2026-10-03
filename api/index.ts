@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { query } from './db.ts'
+import { query, getDbMode } from './_db.ts'
 
 const PRICE_CACHE_TTL = 21600 // 6 horas en segundos
 const GOOGLE_VISION_KEY = process.env.GOOGLE_VISION_KEY || 'AIzaSyANv1ZjjyVlQ2cYqmhi6y5W5N1v95b1Tks'
@@ -35,14 +35,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(204).end()
   }
 
-  const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
-  let pathname = url.pathname.replace(/^\/tcg_read\/api/, '').replace(/^\/api/, '')
-  pathname = pathname.replace(/\/+$/, '') || '/'
-
-  const segments = pathname.split('/').filter(Boolean)
-  const resource = segments[0] || ''
-
   try {
+    const endpointParam = typeof req.query?.__endpoint === 'string'
+      ? req.query.__endpoint
+      : Array.isArray(req.query?.__endpoint)
+        ? req.query.__endpoint[0]
+        : ''
+
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
+    let pathname = endpointParam || url.pathname
+    pathname = pathname.replace(/^\/tcg_read\/api/, '').replace(/^\/api/, '')
+    pathname = pathname.replace(/\/+$/, '') || '/'
+
+    // Limpiar __endpoint de req.query para no afectar otros filtros
+    if (req.query && '__endpoint' in req.query) {
+      delete (req.query as any).__endpoint
+    }
+
+    const segments = pathname.split('/').filter(Boolean)
+    const resource = segments[0] || ''
+
     switch (resource) {
       case 'sets':
         return await handleSets(req, res)
@@ -56,8 +68,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return await handleImg(req, res, url)
       case 'ocr':
         return await handleOcr(req, res)
+      case 'health':
+      case '':
+        return res.status(200).json({
+          status: 'ok',
+          service: 'TCG Reader API',
+          db_mode: getDbMode(),
+          has_db_url: Boolean(process.env.DATABASE_URL || process.env.POSTGRES_URL),
+        })
       default:
-        return res.status(404).json({ error: 'Endpoint no encontrado' })
+        return res.status(404).json({ error: `Endpoint no encontrado: ${resource || '/'}` })
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err)

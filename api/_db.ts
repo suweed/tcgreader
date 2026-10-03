@@ -39,7 +39,7 @@ export function getDbMode(): 'postgres' | 'sqlite' {
 
 export function getPool(): Pool {
   if (!pool) {
-    const connectionString =
+    let connectionString =
       process.env.POSTGRES_URL ||
       process.env.DATABASE_URL ||
       process.env.POSTGRES_PRISMA_URL
@@ -50,11 +50,20 @@ export function getPool(): Pool {
       )
     }
 
+    // Limpiar channel_binding si viene en la URL para evitar warnings o problemas en pg
+    connectionString = connectionString.replace(/([?&])channel_binding=[^&]*(&|$)/, '$1').replace(/[?&]$/, '')
+
     pool = new Pool({
       connectionString,
       ssl: connectionString.includes('localhost') ? false : { rejectUnauthorized: false },
-      max: 10,
+      max: 5,
       idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+    })
+
+    // Prevenir caídas no controladas en el runtime serverless por clientes inactivos
+    pool.on('error', (err) => {
+      console.error('Error imprevisto en cliente Postgres inactivo:', err)
     })
   }
 
@@ -62,12 +71,18 @@ export function getPool(): Pool {
 }
 
 async function getSqliteDb() {
+  if (process.env.VERCEL) {
+    throw new Error('SQLite no está disponible en Vercel. Por favor configura DATABASE_URL en el dashboard de Vercel.')
+  }
+
   if (!sqliteDb) {
     const sqlitePath = path.resolve(process.cwd(), 'api/db/tcg.sqlite')
     if (!fs.existsSync(sqlitePath)) {
       throw new Error(`Base de datos SQLite local no encontrada en ${sqlitePath}`)
     }
-    const { DatabaseSync } = await import('node:sqlite')
+    // Carga dinámica segura para no romper analizadores estáticos en Node < 22
+    const sqliteMod = 'node:sqlite'
+    const { DatabaseSync } = await import(sqliteMod)
     sqliteDb = new DatabaseSync(sqlitePath)
   }
   return sqliteDb
