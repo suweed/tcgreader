@@ -83,15 +83,18 @@ const STABLE_NEEDED = 7 // Requiere ~600-700ms de calma sostenida para enfocar y
 const VARIANCE_MIN = 110 // Detecta presencia de la carta
 const MAD_MAX = 7.5 // Si la mano se mueve para centrar (MAD > 7.5), NO dispara; espera a que se detenga
 
-// Códigos One Piece: OP01-001, OP15-083, EB04-061, ST01-001, P-001, PRB01-001
-const CODE_RE = /\b((?:OP|ST|EB|PRB?|P)\s*[-–—._/]?\s*\d{1,3}\s*[-–—._/]?\s*\d{2,3}(?:_p\d+|_r\d+)?)\b/gi
-const PROMO_RE = /\b(P\s*[-–—._/]?\s*\d{2,3}(?:_p\d+)?)\b/gi
+// Códigos One Piece: OP01-001, OP16-008, EB01-061, ST01-001, P-001, PRB01-001
+// Acepta variantes OCR donde 'P' se confunde con 'F', 'B', 'Q' o '0' (ej. OF 16-008, 0P01-001)
+const CODE_RE = /\b((?:OP|ST|EB|PRB?|P|[0O][FPBQC])\s*[-–—._/]?\s*\d{1,3}\s*[-–—._/ ]\s*\d{2,3}(?:_p\d+|_r\d+)?)\b/gi
+const CODE_NO_HYPHEN_RE = /\b((?:OP|ST|EB|PRB|[0O][FPBQC])\s*\d{2}\s*\d{3})\b/gi
+const PROMO_RE = /\b(P\s*[-–—._/ ]?\s*\d{2,3}(?:_p\d+)?)\b/gi
 
 // Tipos y palabras reservadas a ignorar en OCR
 const CARD_TYPES = new Set([
   'CHARACTER', 'LEADER', 'EVENT', 'STAGE', 'DON', 'DON!!', 'DONII',
   'キャラクター', 'リーダー', 'イベント', 'ステージ', 'ドン!!', 'ドン！！',
 ])
+const TYPE_KEYWORDS = ['CHARACTER', 'LEADER', 'EVENT', 'STAGE', 'DON']
 const CARD_TYPE_PREFIXES = ['CHARAC', 'LEADER', 'NATION', 'ATTRIB', 'TRIGGE', 'COUNTE', 'mination', 'ano', 'SPECIAL', 'SLASH', 'STRIKE']
 
 // Palabras clave de reglas y efectos para no confundir párrafos de habilidades con el nombre del personaje
@@ -110,13 +113,16 @@ const EFFECT_KEYWORDS = new Set([
 
 function cleanOcrString(raw: string): string {
   return raw
+    // Corregir prefijos comunes leídos con error por OCR (OF, OB, 0P, 0F, QP, CP -> OP)
+    .replace(/\b[0O][FPBQC]\s*(?=\d{1,3}[ -/–—._])/gi, 'OP')
     .replace(/\b[0O]P(?=\d|[ -])/gi, 'OP')
     .replace(/\bOP[oO](?=\d)/gi, 'OP0')
     .replace(/\bS[7T](?=\d|[ -])/gi, 'ST')
     .replace(/\bEB(?=\d|[ -])/gi, 'EB')
     .replace(/\bPRB(?=\d|[ -])/gi, 'PRB')
-    .replace(/\b(OP|ST|EB|PRB|P)[ -]?(\d{1,3})[ -]+(\d{2,3})/gi, '$1$2-$3')
-    .replace(/\b(OP|ST|EB|PRB)(\d{2})(\d{3})\b/gi, '$1$2-$3')
+    // Unificar código con separación por espacios o guiones (ej. OP 16-008, OP 16 008, OP16 - 008 -> OP16-008)
+    .replace(/\b(OP|ST|EB|PRB|P|[0O][FPBQC])\s*(\d{1,3})\s*[-–—._/ ]\s*(\d{2,3})\b/gi, '$1$2-$3')
+    .replace(/\b(OP|ST|EB|PRB|[0O][FPBQC])\s*(\d{2})(\d{3})\b/gi, '$1$2-$3')
     .replace(/([A-Z0-9]{1,4})\s*[-–—._/]\s*(\d{2,3})/gi, '$1-$2')
 }
 
@@ -125,11 +131,14 @@ function normalizeFoundCode(raw: string): string {
     .toUpperCase()
     .replace(/\s+/g, '')
     .replace(/[–—._/]/g, '-')
-    .replace(/^0P/i, 'OP')
+    .replace(/^[0O][FPBQC]/i, 'OP')
     .replace(/^S[7T]/i, 'ST')
 
-  // Limpiar rareza pegada al final (ej. OP02-028C, OP05-083R -> OP02-028, OP05-083)
+  // Limpiar rareza pegada al final (ej. OP02-028C, OP05-083R, OP16-008UC, OP01-001SEC)
   c = c.replace(/(?:_?)(?:SEC|SR|UC|SP|C|R|L)$/i, '')
+
+  // Si el OCR leyó un 4to dígito espurio tras el código de 3 dígitos (ej: OP16-0080 -> OP16-008)
+  c = c.replace(/^((?:OP|ST|EB|PRB)\d{2}-\d{3})\d$/i, '$1')
 
   // Casos donde el OCR no leyó el guión (ej. OP15083 -> OP15-083)
   const m = c.match(/^(OP|ST|EB|PRB)(\d{2})(\d{3})$/i)
@@ -154,7 +163,7 @@ function parseOcrText(raw: string): { candidates: { query: string; isCode: boole
   const cleanedRaw = cleanOcrString(raw)
 
   // 1. Códigos de carta en esquina inferior derecha (máxima prioridad)
-  const codes = cleanedRaw.match(CODE_RE) || cleanedRaw.match(PROMO_RE)
+  const codes = cleanedRaw.match(CODE_RE) || cleanedRaw.match(PROMO_RE) || cleanedRaw.match(CODE_NO_HYPHEN_RE)
   if (codes) {
     codes.forEach((c) => {
       const normalized = normalizeFoundCode(c)
@@ -165,7 +174,12 @@ function parseOcrText(raw: string): { candidates: { query: string; isCode: boole
   // 2. Líneas de texto para nombre del personaje
   const rawLines = raw.split('\n')
   for (const line of rawLines) {
-    const trimmed = line
+    const trimmedLine = line.trim()
+    // Los nombres de personajes en One Piece SIEMPRE inician con mayúscula o número
+    // Si empieza con minúscula (ej. 'uard', 'cter', 'ies'), es un fragmento cortado por el recorte
+    if (/^[a-z]/.test(trimmedLine)) continue
+
+    const trimmed = trimmedLine
       .replace(/[^a-zA-Z0-9\u00C0-\u024F\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF65-\uFF9F &.'\-_()']/g, ' ')
       .replace(/\s+/g, ' ')
       .trim()
@@ -174,16 +188,26 @@ function parseOcrText(raw: string): { candidates: { query: string; isCode: boole
 
     const upper = trimmed.toUpperCase()
     // Descartar si es código (ya procesado en paso 1)
-    if (CODE_RE.test(trimmed) || PROMO_RE.test(trimmed)) continue
-    // Descartar tipo de carta o cabecera
-    if (CARD_TYPES.has(upper) || CARD_TYPE_PREFIXES.some((p) => upper.startsWith(p))) continue
-    // Descartar editorial / copyright / país
-    if (/©|TOEI|ANIMATION|BANDAI|JAPAN|SHUEISHA|EIICHIRO|NOT FOR SALE/i.test(trimmed)) continue
+    if (CODE_RE.test(trimmed) || PROMO_RE.test(trimmed) || CODE_NO_HYPHEN_RE.test(trimmed)) continue
+
+    // Descartar si contiene o es parte de palabras reservadas de tipo de carta (ej: 'CHARACTER', 'ACTER', 'RACTER', 'CHARAC')
+    if (CARD_TYPES.has(upper) || TYPE_KEYWORDS.some((t) => t.includes(upper) && upper.length >= 3)) continue
+    if (CARD_TYPE_PREFIXES.some((p) => upper.startsWith(p))) continue
+
+    // Descartar afiliaciones y grupos (ej. 'Whitebeard Pirates Allies', 'Straw Hat Crew')
+    if (/\b(PIRATES?|ALLIES|ALLIANCE|CREW|FAMILY|NAVY|ARMY|KINGDOM|CORPS|REVOLUTIONARY|GOVERNMENT|CLAN|TRIBE|LAND|WANO|SUPERNOVAS?|BAROQUE|WORKS)\b/i.test(upper)) continue
+
+    // Descartar editorial / copyright / país / sellos
+    if (/©|TOEI|ANIMATION|BANDAI|JAPAN|SHUEISHA|EIICHIRO|ODA|NOT FOR SALE|B\.S|B•S/i.test(trimmed)) continue
+
     // Descartar números puros (poder, coste, etc.)
     if (/^\d+$/.test(trimmed)) continue
 
-    // Descartar si contiene palabras típicas de reglas/efectos
+    // Descartar atributos, costes y términos técnicos de cartas si vienen solos
     const words = upper.split(/\s+/).map((w) => w.replace(/'S$/, '').replace(/[^A-Z0-9]/g, ''))
+    if (words.some((w) => ['SLASH', 'STRIKE', 'SPECIAL', 'WISDOM', 'RANGED', 'POWER', 'COST', 'COUNTER', 'TRIGGER', 'ATTRIBUTE', 'TYPE', 'LIFE'].includes(w)) && words.length <= 2) continue
+
+    // Descartar si contiene palabras típicas de reglas/efectos
     const effectWords = words.filter((w) => EFFECT_KEYWORDS.has(w))
     if (effectWords.length > 0 && (words.length >= 3 || effectWords.length >= words.length * 0.35)) continue
     if (words.some((w) => ['OPPONENT', 'CHARACTER', 'CHARACTERS', 'CARD', 'CARDS', 'RESTED', 'DON'].includes(w))) continue
@@ -230,24 +254,24 @@ function captureZones(video: HTMLVideoElement, scale = 0.74): { textImg: string;
 
   // 2. Extracción enfocada para OCR:
   // Zona A: ID / Código en esquina inferior derecha
-  // Ocupa del 48% al 98% horizontal y del 78% al 98% vertical (20% de altura)
-  // Con este tamaño y mapeo 1:1, NUNCA cae fuera de la carta ni en la mesa
-  const codeSrcX = Math.floor(guide.x + guide.w * 0.48)
-  const codeSrcY = Math.floor(guide.y + guide.h * 0.78)
-  const codeSrcW = Math.floor(guide.w * 0.50)
-  const codeSrcH = Math.floor(guide.h * 0.20)
+  // Ocupa del 60% al 97% horizontal y del 88% al 98% vertical (10% de altura)
+  // Con este tamaño y zoom 4.5x, aísla estrictamente el ID (OPxx-xxx) y elimina cualquier texto superior
+  const codeSrcX = Math.floor(guide.x + guide.w * 0.60)
+  const codeSrcY = Math.floor(guide.y + guide.h * 0.88)
+  const codeSrcW = Math.floor(guide.w * 0.37)
+  const codeSrcH = Math.floor(guide.h * 0.10)
 
-  const CODE_ZOOM = 2.8
+  const CODE_ZOOM = 4.5
   const codeDstW = Math.floor(codeSrcW * CODE_ZOOM)
   const codeDstH = Math.floor(codeSrcH * CODE_ZOOM)
 
-  // Zona B: Franja de Nombre del Personaje (x: 5% a 95%, y: 70% a 88%)
-  const nameSrcX = Math.floor(guide.x + guide.w * 0.05)
-  const nameSrcY = Math.floor(guide.y + guide.h * 0.70)
-  const nameSrcW = Math.floor(guide.w * 0.90)
-  const nameSrcH = Math.floor(guide.h * 0.18)
+  // Zona B: Franja de Nombre del Personaje (x: 8% a 92%, y: 74% a 87%)
+  const nameSrcX = Math.floor(guide.x + guide.w * 0.08)
+  const nameSrcY = Math.floor(guide.y + guide.h * 0.74)
+  const nameSrcW = Math.floor(guide.w * 0.84)
+  const nameSrcH = Math.floor(guide.h * 0.13)
 
-  const NAME_ZOOM = 2.2
+  const NAME_ZOOM = 2.4
   const nameDstW = Math.floor(nameSrcW * NAME_ZOOM)
   const nameDstH = Math.floor(nameSrcH * NAME_ZOOM)
 
@@ -426,11 +450,11 @@ export default function ScannerPage() {
     ctx.setLineDash([])
 
     // 4. Recuadro guía en esquina inferior derecha para el Nº / ID de Carta (OPxx-xxx)
-    // Cubre del 48% al 98% horizontal y del 78% al 98% vertical para coincidir exactamente con el crop
-    const codeBoxX = Math.round(x + w * 0.48)
-    const codeBoxY = Math.round(y + h * 0.78)
-    const codeBoxW = Math.round(w * 0.50)
-    const codeBoxH = Math.round(h * 0.20)
+    // Cubre del 60% al 97% horizontal y del 88% al 98% vertical para coincidir exactamente con el crop
+    const codeBoxX = Math.round(x + w * 0.60)
+    const codeBoxY = Math.round(y + h * 0.88)
+    const codeBoxW = Math.round(w * 0.37)
+    const codeBoxH = Math.round(h * 0.10)
     const codeR = 6
 
     ctx.strokeStyle = color === '#22c55e' ? 'rgba(34, 197, 94, 0.95)' : 'rgba(96, 165, 250, 0.85)'
@@ -443,7 +467,7 @@ export default function ScannerPage() {
     ctx.fillStyle = color === '#22c55e' ? 'rgba(34, 197, 94, 0.95)' : 'rgba(96, 165, 250, 0.95)'
     ctx.font = `bold ${Math.max(9, Math.round(w * 0.028))}px monospace`
     ctx.textAlign = 'right'
-    ctx.fillText('🔍 Zona ID (OPxx-xxx)', codeBoxX + codeBoxW - 4, codeBoxY - 4)
+    ctx.fillText('ID (OPxx-xxx)', codeBoxX + codeBoxW - 4, codeBoxY - 4)
     ctx.textAlign = 'left'
 
     // 5. Barra de progreso visual cuando el usuario mantiene quieta la carta
