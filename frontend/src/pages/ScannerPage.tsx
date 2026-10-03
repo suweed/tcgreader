@@ -723,11 +723,27 @@ export default function ScannerPage() {
       setBatchProgress('')
       try {
         const candidateList = Array.isArray(candidatesToTry) ? candidatesToTry : [candidatesToTry]
-        let found: Card[] = []
-        let activeCandidate: { query: string; isCode: boolean } | null = null
+        
+        let bestOverallCards: (Card & { visualScore?: number; visualMatches?: number })[] = []
+        let bestOverallCandidate: { query: string; isCode: boolean } | null = null
+        let bestOverallScore = -1
+        let bestOverallDebug: any[] = []
 
-        // Intentar candidatos en orden de prioridad: si el código falla o no existe en BD, cae automáticamente al nombre alterno
+        let queryFeatures: { descQuery: any; kpSize: number; cleanup: () => void } | null = null
+        try {
+          if (typeof (window as any).cv !== 'undefined') {
+            queryFeatures = extractQueryFeatures((window as any).cv, artCanvas)
+          }
+        } catch (e) {
+          console.warn('[Visual] Error extrayendo features query:', e)
+        }
+
+        // Buffer para persistir descriptores
+        const newlyExtracted: Array<any> = []
+
         for (const candidate of candidateList) {
+          let found: Card[] = []
+
           if (candidate.isCode) {
             const clean = normalizeFoundCode(candidate.query)
             try {
@@ -739,17 +755,9 @@ export default function ScannerPage() {
                   if (single) list = [single]
                 } catch {}
               }
-              if (list.length > 0) {
-                found = list
-                activeCandidate = candidate
-                break
-              }
-            } catch (err) {
-              console.warn('[Search] Error consultando código en BD:', candidate.query, err)
-            }
+              if (list.length > 0) found = list
+            } catch (err) {}
           } else {
-            // Búsqueda por NOMBRE (ej. Monkey.D.Luffy, Buggy, Nami, etc.)
-            // Traer todas las cartas disponibles para este personaje
             try {
               const firstRes = await api.getCards({ q: candidate.query, limit: 100 })
               let list = firstRes.data || []
@@ -761,18 +769,113 @@ export default function ScannerPage() {
                   } catch {}
                 }
               }
-              if (list.length > 0) {
-                found = list
-                activeCandidate = candidate
+              if (list.length > 0) found = list
+            } catch (err) {}
+          }
+
+          if (found.length === 0) continue
+
+          const codes = found.map((c) => c.card_code)
+          let cacheMap: Record<string, { descriptors: string; rows: number }> = {}
+          try {
+            cacheMap = await api.getVisualCache(codes)
+          } catch (cacheErr) {}
+
+          const evaluateCard = async (card: Card): Promise<{ score: number; matches: number }> => {
+            const cv = (window as any).cv
+            if (!cv) return { score: 0, matches: 0 }
+            const cached = cacheMap[card.card_code]
+            if (cached && queryFeatures) {
+              return compareWithCachedDescriptors(cv, queryFeatures.descQuery, queryFeatures.kpSize, cached.descriptors, cached.rows)
+            }
+            const locale = card.locales.en ?? card.locales.jp
+            const imgUrl = locale?.img_url ? proxyImg(locale.img_url) : null
+            if (!imgUrl) return { score: 0, matches: 0 }
+            try {
+              const imgEl = await preloadImage(imgUrl)
+              const extracted = extractImageDescriptors(cv, imgEl)
+              if (extracted) {
+                newlyExtracted.push({ card_code: card.card_code, language: 'en', descriptors: extracted.base64, rows_count: extracted.rows })
+                cacheMap[card.card_code] = { descriptors: extracted.base64, rows: extracted.rows }
+              }
+              if (queryFeatures && extracted) {
+                return compareWithCachedDescriptors(cv, queryFeatures.descQuery, queryFeatures.kpSize, extracted.base64, extracted.rows)
+              } else {
+                return compareWithORB(cv, artCanvas, imgEl)
+              }
+            } catch {
+              return { score: 0, matches: 0 }
+            }
+          }
+
+          const scored: (Card & { visualScore?: number; visualMatches?: number })[] = []
+
+          if (candidate.isCode || found.length <= 5) {
+            for (const card of found) {
+              const result = await evaluateCard(card)
+              scored.push({ ...card, visualScore: result.score, visualMatches: result.matches })
+            }
+          } else {
+            const totalCards = found.length
+            let currentIndex = 0
+            let foundWinner = false
+
+            const firstBatchSize = Math.min(5, totalCards)
+            setBatchProgress(`Evaluando lote 1 (1-${firstBatchSize} de ${totalCards})…`)
+            for (let i = 0; i < firstBatchSize; i++) {
+              const result = await evaluateCard(found[i])
+              scored.push({ ...found[i], visualScore: result.score, visualMatches: result.matches })
+            }
+            currentIndex = firstBatchSize
+
+            const bestInBatch1 = scored.reduce((max, c) => Math.max(max, c.visualScore ?? 0), 0)
+            if (bestInBatch1 >= 50) foundWinner = true
+
+            let batchNumber = 2
+            while (!foundWinner && currentIndex < totalCards) {
+              const remaining = totalCards - currentIndex
+              const currentBatchSize = remaining <= 10 ? remaining : Math.min(20, remaining)
+              const endIndex = currentIndex + currentBatchSize
+              setBatchProgress(`Evaluando lote ${batchNumber} (${currentIndex + 1}-${endIndex} de ${totalCards})…`)
+              
+              for (let i = currentIndex; i < endIndex; i++) {
+                const result = await evaluateCard(found[i])
+                scored.push({ ...found[i], visualScore: result.score, visualMatches: result.matches })
+              }
+              currentIndex = endIndex
+              batchNumber++
+              
+              const currentBest = scored.reduce((max, c) => Math.max(max, c.visualScore ?? 0), 0)
+              if (currentBest >= 50) {
+                foundWinner = true
                 break
               }
-            } catch (err) {
-              console.warn('[Search] Error consultando nombre en BD:', candidate.query, err)
             }
+          }
+
+          scored.sort((a, b) => (b.visualScore ?? 0) - (a.visualScore ?? 0))
+          const bestScoreForCandidate = scored[0]?.visualScore ?? 0
+
+          if (bestScoreForCandidate > bestOverallScore) {
+            bestOverallScore = bestScoreForCandidate
+            bestOverallCards = scored
+            bestOverallCandidate = candidate
+          }
+
+          if (bestOverallScore >= 30) {
+            break
           }
         }
 
-        if (!activeCandidate || found.length === 0) {
+        if (newlyExtracted.length > 0) {
+          api.saveVisualCache(newlyExtracted).catch(() => {})
+        }
+
+        if (queryFeatures) {
+          queryFeatures.cleanup()
+        }
+
+        if (!bestOverallCandidate || bestOverallCards.length === 0) {
           setCards([])
           setDebugMatches([])
           setScanState('error')
@@ -782,216 +885,17 @@ export default function ScannerPage() {
           return
         }
 
-        setDetectedText(activeCandidate.isCode ? `Código: ${activeCandidate.query}` : `"${activeCandidate.query}"`)
-        setDetectedQuery(activeCandidate.query)
+        setDetectedText(bestOverallCandidate.isCode ? `Código: ${bestOverallCandidate.query}` : `"${bestOverallCandidate.query}"`)
+        setDetectedQuery(bestOverallCandidate.query)
+        setCards(bestOverallCards)
 
-        // CASO 1: Si solo hay 1 carta que coincide exactamente en BD -> Mostrarla directamente
-        if (found.length === 1) {
-          setCards(found)
-          const loc = found[0].locales.en ?? found[0].locales.jp
-          setDebugMatches([
-            {
-              card_code: found[0].card_code,
-              name: loc?.name || '',
-              img_url: loc?.img_url ? proxyImg(loc.img_url) : null,
-              visualScore: 100,
-              visualMatches: 100,
-              passedThreshold: true,
-            },
-          ])
-          setSelectedCard(found[0].card_code) // <-- Abre directamente el modal (coincidencia única 100% >= 50%)
-          setScanState('done')
-          setIsCovered(true)
-          loopActiveRef.current = false
-          stopCameraTracks()
-          return
-        }
-
-        // CASO 2: Comparar con OpenCV
-        let cv: any = null
-        try {
-          cv = await loadOpenCV()
-        } catch (cvErr) {
-          console.warn('[OpenCV] No disponible o aún cargando en segundo plano:', cvErr)
-        }
-
-        const scored: ScoredCard[] = []
-
-        if (!cv) {
-          // Si OpenCV no está disponible aún, mostrar las cartas encontradas en la BD
-          for (const card of found.slice(0, 10)) {
-            scored.push({ ...card, visualScore: 0, visualMatches: 0 })
-          }
-        } else {
-          // 1. Extraer características ORB de la foto de la cámara UNA SOLA VEZ
-          const queryFeatures = extractQueryFeatures(cv, artCanvas)
-
-          // 2. Consultar descriptores en caché (PostgreSQL) para todos los candidatos
-          const codes = found.map((c) => c.card_code)
-          let cacheMap: Record<string, { descriptors: string; rows: number }> = {}
-          try {
-            cacheMap = await api.getVisualCache(codes)
-          } catch (cacheErr) {
-            console.warn('[VisualCache] Error consultando caché en BD:', cacheErr)
-          }
-
-          // Buffer para persistir descriptores calculados al vuelo
-          const newlyExtracted: Array<{ card_code: string; language: string; descriptors: string; rows_count: number }> = []
-
-          // Función optimizada para evaluar una carta:
-          // Si está en caché -> compara en memoria en < 1 milisegundo (sin descargar imagen)
-          // Si no está en caché -> descarga la imagen, calcula, compara y guarda en caché
-          const evaluateCard = async (card: Card): Promise<{ score: number; matches: number }> => {
-            const cached = cacheMap[card.card_code]
-            if (cached && queryFeatures) {
-              return compareWithCachedDescriptors(
-                cv,
-                queryFeatures.descQuery,
-                queryFeatures.kpSize,
-                cached.descriptors,
-                cached.rows
-              )
-            }
-
-            const locale = card.locales.en ?? card.locales.jp
-            const imgUrl = locale?.img_url ? proxyImg(locale.img_url) : null
-            if (!imgUrl) return { score: 0, matches: 0 }
-
-            try {
-              const imgEl = await preloadImage(imgUrl)
-              const extracted = extractImageDescriptors(cv, imgEl)
-              if (extracted) {
-                newlyExtracted.push({
-                  card_code: card.card_code,
-                  language: 'en',
-                  descriptors: extracted.base64,
-                  rows_count: extracted.rows,
-                })
-                cacheMap[card.card_code] = {
-                  descriptors: extracted.base64,
-                  rows: extracted.rows,
-                }
-              }
-
-              if (queryFeatures && extracted) {
-                return compareWithCachedDescriptors(
-                  cv,
-                  queryFeatures.descQuery,
-                  queryFeatures.kpSize,
-                  extracted.base64,
-                  extracted.rows
-                )
-              } else {
-                return compareWithORB(cv, artCanvas, imgEl)
-              }
-            } catch {
-              return { score: 0, matches: 0 }
-            }
-          }
-
-          if (activeCandidate.isCode || found.length <= 5) {
-            // Si es búsqueda por código o son pocas cartas (<= 5): evaluar todas directamente
-            for (const card of found) {
-              const result = await evaluateCard(card)
-              scored.push({
-                ...card,
-                visualScore: result.score,
-                visualMatches: result.matches,
-              })
-            }
-          } else {
-            // CASO ESPECIAL: Carta por nombre con muchos resultados (> 5 cartas)
-            // Proceso progresivo por lotes solicitado:
-            // 1. Lote 1: primeras 5 cartas
-            // 2. Si no hay coincidencia >= 50%:
-            //    - Si quedan <= 10 restantes: evalúa todas las restantes
-            //    - Si quedan > 10 restantes: evalúa por lotes de 20 hasta llegar al total
-            const totalCards = found.length
-            let currentIndex = 0
-            let foundWinner = false
-
-            // Lote 1: primeras 5 cartas
-            const firstBatchSize = Math.min(5, totalCards)
-            setBatchProgress(`Evaluando lote 1 (1-${firstBatchSize} de ${totalCards})…`)
-
-            for (let i = 0; i < firstBatchSize; i++) {
-              const card = found[i]
-              const result = await evaluateCard(card)
-              scored.push({
-                ...card,
-                visualScore: result.score,
-                visualMatches: result.matches,
-              })
-            }
-
-            currentIndex = firstBatchSize
-
-            // Verificar si alguna de las primeras 5 alcanzó >= 50%
-            const bestInBatch1 = scored.reduce((max, c) => Math.max(max, c.visualScore ?? 0), 0)
-            if (bestInBatch1 >= 50) {
-              foundWinner = true
-            }
-
-            // Lotes subsiguientes si no se alcanzó el 50%
-            let batchNumber = 2
-            while (!foundWinner && currentIndex < totalCards) {
-              const remaining = totalCards - currentIndex
-              const currentBatchSize = remaining <= 10 ? remaining : Math.min(20, remaining)
-              const endIndex = currentIndex + currentBatchSize
-
-              setBatchProgress(`Evaluando lote ${batchNumber} (${currentIndex + 1}-${endIndex} de ${totalCards})…`)
-
-              for (let i = currentIndex; i < endIndex; i++) {
-                const card = found[i]
-                const result = await evaluateCard(card)
-                scored.push({
-                  ...card,
-                  visualScore: result.score,
-                  visualMatches: result.matches,
-                })
-              }
-
-              currentIndex = endIndex
-              batchNumber++
-
-              // Si en este lote apareció una coincidencia >= 50%, detenemos la búsqueda
-              const currentBest = scored.reduce((max, c) => Math.max(max, c.visualScore ?? 0), 0)
-              if (currentBest >= 50) {
-                foundWinner = true
-                break
-              }
-            }
-          }
-
-          // Guardar descriptores recién generados en PostgreSQL para futuras comparaciones instantáneas
-          if (newlyExtracted.length > 0) {
-            api.saveVisualCache(newlyExtracted).catch((err) => {
-              console.warn('[VisualCache] Error guardando descriptores en BD:', err)
-            })
-          }
-
-          // Liberar recursos de la imagen capturada
-          if (queryFeatures) {
-            queryFeatures.cleanup()
-          }
-        }
-
-        // Ordenar de mayor a menor coincidencia visual
-        scored.sort((a, b) => (b.visualScore ?? 0) - (a.visualScore ?? 0))
-        setCards(scored)
-
-        const best = scored[0]
+        const best = bestOverallCards[0]
         const bestScore = best?.visualScore ?? 0
-        const secondScore = scored[1]?.visualScore ?? 0
+        const secondScore = bestOverallCards[1]?.visualScore ?? 0
         const margin = bestScore - secondScore
-
-        // Regla:
-        // 1. Coincidencia directa >= 50%
-        // 2. Fallback de Ganador Dominante: score >= 38% y margen >= 12% sobre el segundo resultado (ej. 45% vs < 30%)
         const isDominantWinner = Boolean(best && (bestScore >= 50 || (bestScore >= 38 && margin >= 12)))
 
-        // Registrar datos de diagnóstico visual para depuración
-        const debugList: DebugMatchInfo[] = scored.map((c, idx) => {
+        const debugList = bestOverallCards.map((c, idx) => {
           const loc = c.locales.en ?? c.locales.jp
           const s = c.visualScore ?? 0
           const passed = s >= 50 || (idx === 0 && isDominantWinner)
@@ -1006,7 +910,7 @@ export default function ScannerPage() {
         })
         setDebugMatches(debugList)
 
-        if (isDominantWinner && best) {
+if (isDominantWinner && best) {
           setSelectedCard(best.card_code)
         } else {
           setSelectedCard(null)
