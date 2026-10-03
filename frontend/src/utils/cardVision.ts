@@ -108,6 +108,8 @@ export function compareWithORB(
   let matRef: any = null
   let grayQuery: any = null
   let grayRef: any = null
+  let normQuery: any = null
+  let normRef: any = null
   let orb: any = null
   let kpQuery: any = null
   let kpRef: any = null
@@ -115,6 +117,7 @@ export function compareWithORB(
   let descRef: any = null
   let matcher: any = null
   let matches: any = null
+  let mask: any = null
 
   try {
     matQuery = cv.imread(queryCanvas)
@@ -125,23 +128,29 @@ export function compareWithORB(
     cv.cvtColor(matQuery, grayQuery, cv.COLOR_RGBA2GRAY)
     cv.cvtColor(matRef, grayRef, cv.COLOR_RGBA2GRAY)
 
-    // ORB with 500 features
+    // Normalizar a una resolución estándar de comparación (300 x 419, ratio exacto 63:88)
+    const stdSize = new cv.Size(300, 419)
+    normQuery = new cv.Mat()
+    normRef = new cv.Mat()
+    cv.resize(grayQuery, normQuery, stdSize, 0, 0, cv.INTER_AREA)
+    cv.resize(grayRef, normRef, stdSize, 0, 0, cv.INTER_AREA)
+
+    // ORB con 500 características clave
     orb = new cv.ORB(500)
     kpQuery = new cv.KeyPointVector()
     kpRef = new cv.KeyPointVector()
     descQuery = new cv.Mat()
     descRef = new cv.Mat()
 
-    const mask = new cv.Mat()
-    orb.detectAndCompute(grayQuery, mask, kpQuery, descQuery)
-    orb.detectAndCompute(grayRef, mask, kpRef, descRef)
-    mask.delete()
+    mask = new cv.Mat()
+    orb.detectAndCompute(normQuery, mask, kpQuery, descQuery)
+    orb.detectAndCompute(normRef, mask, kpRef, descRef)
 
     if (descQuery.empty() || descRef.empty() || kpQuery.size() === 0 || kpRef.size() === 0) {
       return { score: 0, matches: 0 }
     }
 
-    // Brute force matcher with Hamming distance for binary descriptors
+    // Brute force matcher con distancia de Hamming para descriptores binarios
     matcher = new cv.BFMatcher(cv.NORM_HAMMING, true)
     matches = new cv.DMatchVector()
     matcher.match(descQuery, descRef, matches)
@@ -150,26 +159,30 @@ export function compareWithORB(
     const count = matches.size()
     for (let i = 0; i < count; i++) {
       const match = matches.get(i)
-      // Umbral estricto para descartar emparejamientos ruidosos
-      if (match.distance <= 50) {
+      // Umbral de distancia Hamming estricto para descartar ruido
+      if (match.distance <= 48) {
         goodMatches++
       }
     }
 
     const minKp = Math.min(kpQuery.size(), kpRef.size())
-    const score = minKp > 0 ? Math.min(100, Math.round((goodMatches / Math.min(minKp, 120)) * 100)) : 0
+    // Puntuación sobre 100 basada en matches consistentes
+    const score = minKp > 0 ? Math.min(100, Math.round((goodMatches / Math.min(minKp, 100)) * 100)) : 0
 
     return { score, matches: goodMatches }
   } catch (err) {
     console.warn('[OpenCV] Error comparando imagen:', err)
     return { score: 0, matches: 0 }
   } finally {
-    // Liberar memoria WebAssembly
+    // Liberar memoria WebAssembly rigurosamente
     try {
+      if (mask) mask.delete()
       if (matQuery) matQuery.delete()
       if (matRef) matRef.delete()
       if (grayQuery) grayQuery.delete()
       if (grayRef) grayRef.delete()
+      if (normQuery) normQuery.delete()
+      if (normRef) normRef.delete()
       if (orb) orb.delete()
       if (kpQuery) kpQuery.delete()
       if (kpRef) kpRef.delete()
