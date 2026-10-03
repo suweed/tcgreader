@@ -12,7 +12,7 @@ export default function AlbumPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-white mb-2">📖 Álbum</h1>
+      <h1 className="text-2xl font-bold text-white mb-2"><span className="no-invert">📖</span> Álbum</h1>
 
       {stats && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">

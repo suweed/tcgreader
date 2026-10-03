@@ -7,7 +7,7 @@ export default function SearchPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-white mb-4">🔍 Buscar Cartas</h1>
+      <h1 className="text-2xl font-bold text-white mb-4"><span className="no-invert">🔍</span> Buscar Cartas</h1>
       <CardGrid initialQ={initialQ} key={initialQ ?? ''} />
     </div>
   )

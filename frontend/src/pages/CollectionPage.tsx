@@ -35,7 +35,7 @@ export default function CollectionPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
-        <h1 className="text-2xl font-bold text-white">🗂 Mi Colección</h1>
+        <h1 className="text-2xl font-bold text-white"><span className="no-invert">🗂</span> Mi Colección</h1>
         <button
           onClick={handleRefresh}
           disabled={refreshing}

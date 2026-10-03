@@ -89,10 +89,10 @@ export function getVideoGuideRect(video: HTMLVideoElement, scale = 0.94) {
   }
 }
 
-// Calibración estricta para asegurar nitidez perfecta y evitar fotos con movimiento
-const STABLE_NEEDED = 7 // Requiere ~600-700ms de calma sostenida para enfocar y centrar
-const VARIANCE_MIN = 110 // Detecta presencia de la carta
-const MAD_MAX = 7.5 // Si la mano se mueve para centrar (MAD > 7.5), NO dispara; espera a que se detenga
+// Calibración más permisiva para facilitar la lectura con sombras o temblor
+const STABLE_NEEDED = 4 // Requiere menos tiempo de calma (~300-400ms)
+const VARIANCE_MIN = 80 // Reduce exigencia de contraste/luz para detectar la carta
+const MAD_MAX = 14 // Permite mayor temblor de mano sin reiniciar el medidor
 
 // Códigos One Piece: OP01-001, OP16-008, EB01-061, ST01-001, P-001, PRB01-001
 // Acepta variantes OCR donde 'P' se confunde con 'F', 'B', 'Q' o '0' (ej. OF 16-008, 0P01-001)
@@ -206,11 +206,11 @@ function parseOcrText(raw: string): { candidates: { query: string; isCode: boole
     if (/^[a-z]/.test(trimmedLine)) continue
 
     const trimmed = trimmedLine
-      .replace(/[^a-zA-Z0-9\u00C0-\u024F\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF65-\uFF9F &.'\-_()']/g, ' ')
+      .replace(/[^a-zA-Z0-9\u00C0-\u024F\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF65-\uFF9F &.'\-_()!?']/g, ' ')
       .replace(/\s+/g, ' ')
       .trim()
 
-    if (trimmed.length < 2 || trimmed.length > 35) continue
+    if (trimmed.length < 2 || trimmed.length > 60) continue
 
     const upper = trimmed.toUpperCase()
     // Descartar si es código (ya procesado en paso 1)
@@ -311,12 +311,14 @@ function enhanceContrastZone(
       }
     }
 
-    // 3. Normalización de alto contraste:
-    // El fondo (sea blanco o verde oscuro) se equilibra a neutro (128)
-    // y los caracteres de texto resaltan con máxima nitidez sin manchas oscuras
+    // 3. Normalización de contraste inteligente:
+    // Mantiene la polaridad original (fondo negro sigue siendo negro, blanco sigue siendo blanco)
+    // pero exagera drásticamente la diferencia local para hacer el texto hiper nítido.
     for (let i = 0; i < totalPixels; i++) {
       const diff = gray[i] - bg[i]
-      let val = 128 + diff * 3.4
+      // Aumentar el contraste local. Si el pixel es ruido/sombra leve, apenas cambia.
+      // Si es parte de un borde/texto (diff grande), se va a negro puro o blanco puro.
+      let val = gray[i] + diff * 3.0
       val = Math.max(0, Math.min(255, val))
 
       const idx = i * 4
@@ -1227,7 +1229,7 @@ export default function ScannerPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
-        <h1 className="text-2xl font-bold text-white">📷 Escáner One Piece</h1>
+        <h1 className="text-2xl font-bold text-white"><span className="no-invert">📷</span> Escáner One Piece</h1>
         {cameraOn && (
           <div className="flex items-center gap-2">
             <button

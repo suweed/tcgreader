@@ -63,6 +63,13 @@ export const api = {
 
   getPrice: (card_code: string) => apiFetch<PriceResult>(`/price/${card_code}`),
 
+  setPrice: (card_code: string, priceUsd: number) => 
+    apiFetch<PriceResult>(`/price/${card_code}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ priceUsd }),
+    }),
+
   refreshPrices: () => apiFetch<RefreshPricesResult>('/collection/refresh-prices', { method: 'POST' }),
 
   ocr: async (imageBase64: string): Promise<{ text: string; blocks: { text: string; confidence: number | null }[] }> => {

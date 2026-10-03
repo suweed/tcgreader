@@ -522,12 +522,41 @@ async function handleCollection(req: VercelRequest, res: VercelResponse, segment
 // 4. PRICE (OPTCG API)
 // ----------------------------------------------------------------------------
 async function handlePrice(req: VercelRequest, res: VercelResponse, segments: string[]) {
-  if (req.method !== 'GET') return res.status(405).json({ error: 'Método no permitido' })
-
   const cardCode = normalizeCardCode(segments[1] || '')
   if (!cardCode) return res.status(400).json({ error: 'Código de carta requerido' })
 
   const now = Math.floor(Date.now() / 1000)
+
+  // POST /api/price/:cardCode -> set manual price
+  if (req.method === 'POST') {
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {}
+    const customUsd = Number(body.priceUsd)
+    if (isNaN(customUsd) || customUsd < 0) return res.status(400).json({ error: 'Precio inválido' })
+
+    const row = (await query('SELECT price_data FROM cards WHERE card_code = $1', [cardCode])).rows[0]
+    let oldData = row?.price_data ? (typeof row.price_data === 'string' ? JSON.parse(row.price_data) : row.price_data) : {}
+
+    const newData = {
+      ...oldData,
+      prices: {
+        raw: {
+          near_mint: { tcgplayer: { market: customUsd, low: customUsd } }
+        }
+      },
+      _is_manual: true
+    }
+
+    await query('UPDATE cards SET price_data = $1, price_cached_at = $2 WHERE card_code = $3', [
+      JSON.stringify(newData),
+      0, // Forzar caché vencido para que el backend intente buscar precio real en la siguiente recarga, si lo encuentra lo pisa, si no lo conserva.
+      cardCode,
+    ])
+
+    return res.status(200).json(newData)
+  }
+
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Método no permitido' })
+
   const cardRow = (await query('SELECT price_data, price_cached_at FROM cards WHERE card_code = $1', [cardCode])).rows[0]
 
   if (!cardRow) return res.status(404).json({ error: 'Carta no encontrada' })
@@ -555,14 +584,25 @@ async function handlePrice(req: VercelRequest, res: VercelResponse, segments: st
     return res.status(200).json({ card_code: cardCode, prices: null, _cached: false })
   }
 
+  const newMarket = extractMarketPrice(payload)
+  let dataToSave = payload
+
+  // Si el API no devolvió precio válido, pero teníamos uno manual, conservar el manual.
+  if (newMarket === null && cardRow.price_data) {
+    const oldData = typeof cardRow.price_data === 'string' ? JSON.parse(cardRow.price_data) : cardRow.price_data
+    if (oldData._is_manual) {
+      dataToSave = oldData
+    }
+  }
+
   await query('UPDATE cards SET price_data = $1, price_cached_at = $2 WHERE card_code = $3', [
-    JSON.stringify(payload),
+    JSON.stringify(dataToSave),
     now,
     cardCode,
   ])
 
   return res.status(200).json({
-    ...payload,
+    ...dataToSave,
     _cached: false,
     _cached_at: now,
   })
@@ -675,13 +715,24 @@ async function fetchAndCachePrice(cardCode: string): Promise<number | null> {
   const payload = await fetchFromOptcg(cardCode)
   if (!payload) return extractMarketPrice(row.price_data)
 
+  const newMarket = extractMarketPrice(payload)
+  let dataToSave = payload
+
+  // Si el API no devolvió precio válido, pero teníamos uno manual, conservar el manual.
+  if (newMarket === null && row.price_data) {
+    const oldData = typeof row.price_data === 'string' ? JSON.parse(row.price_data) : row.price_data
+    if (oldData._is_manual) {
+      dataToSave = oldData
+    }
+  }
+
   await query('UPDATE cards SET price_data = $1, price_cached_at = $2 WHERE card_code = $3', [
-    JSON.stringify(payload),
+    JSON.stringify(dataToSave),
     now,
     cardCode,
   ])
 
-  return extractMarketPrice(payload)
+  return extractMarketPrice(dataToSave)
 }
 
 // ----------------------------------------------------------------------------

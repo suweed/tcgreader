@@ -21,6 +21,11 @@ export default function CardModal({ cardCode, onClose, onCollectionChange }: Pro
   const [lensPos, setLensPos] = useState<{ x: number; y: number; iw: number; ih: number } | null>(null)
   const zoomImgRef = useRef<HTMLImageElement>(null)
 
+  const [editPriceMode, setEditPriceMode] = useState(false)
+  const [editPriceVal, setEditPriceVal] = useState('')
+  const [editPriceCur, setEditPriceCur] = useState<'USD'|'MXN'>('USD')
+  const [savingPrice, setSavingPrice] = useState(false)
+
   useEffect(() => {
     api.getCard(cardCode).then((c) => {
       setCard(c)
@@ -29,6 +34,21 @@ export default function CardModal({ cardCode, onClose, onCollectionChange }: Pro
     })
     api.getPrice(cardCode).then(setPrice).catch(() => {})
   }, [cardCode])
+
+  async function handleSavePrice() {
+    const val = parseFloat(editPriceVal)
+    if (isNaN(val) || val < 0) return
+    setSavingPrice(true)
+    const usdVal = editPriceCur === 'MXN' ? val / usdToMxn : val
+    try {
+      const newPrice = await api.setPrice(cardCode, usdVal)
+      setPrice(newPrice)
+      setEditPriceMode(false)
+      onCollectionChange?.()
+    } finally {
+      setSavingPrice(false)
+    }
+  }
 
   async function handleAdd(language: 'en' | 'jp') {
     if (!card) return
@@ -239,38 +259,83 @@ export default function CardModal({ cardCode, onClose, onCollectionChange }: Pro
             )}
 
             {/* Prices */}
-            {price && price.prices?.raw && (
-              <div className="px-4 pb-2">
-                <p className="text-xs text-slate-400 mb-1">
-                  Precio TCGPlayer {price._cached ? '(caché)' : '(actualizado)'}
+            <div className="px-4 pb-2 mt-2">
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs text-slate-400">
+                  {price && price.prices?.raw ? `Precio TCGPlayer ${price._cached ? '(caché)' : '(actualizado)'}` : 'Precio de mercado'}
                 </p>
-                {(() => {
-                  const nm = price.prices.raw.near_mint?.tcgplayer
-                  const lp = price.prices.raw.lightly_played?.tcgplayer
-                  const rows = [
-                    nm && { label: 'Near Mint', market: nm.market, low: nm.low },
-                    lp && { label: 'Lightly Played', market: lp.market, low: lp.low },
-                  ].filter(Boolean) as { label: string; market?: number; low?: number }[]
-                  return rows.map((r, i) => {
-                    const usd = r.market != null && r.market > 0 ? r.market : r.low != null && r.low > 0 ? r.low : null
-                    return (
-                      <div key={i} className="text-xs bg-slate-700/50 rounded p-2 mb-1 flex justify-between items-center">
-                        <span className="text-slate-300">{r.label}</span>
-                        <div className="text-right">
-                          {usd != null ? (
-                            <>
-                              <span className="text-green-400 font-bold">${usd.toFixed(2)} USD</span>
-                              <span className="block text-yellow-400 font-bold">${(usd * usdToMxn).toFixed(0)} MXN</span>
-                            </>
-                          ) : '—'}
-                        </div>
-                      </div>
-                    )
-                  })
-                })()}
-                <p className="text-xs text-slate-500 mt-1">{price.name} · {price.rarity} · {price.set?.name}</p>
+                {!editPriceMode && (
+                  <button onClick={() => setEditPriceMode(true)} className="text-xs text-blue-400 hover:text-blue-300">
+                    ✎ Editar
+                  </button>
+                )}
               </div>
-            )}
+
+              {editPriceMode ? (
+                <div className="bg-slate-700/50 rounded p-2 mb-1 flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="Precio"
+                    value={editPriceVal}
+                    onChange={(e) => setEditPriceVal(e.target.value)}
+                    className="flex-1 min-w-0 bg-slate-800 text-white rounded px-2 py-1 text-sm outline-none border border-slate-600 focus:border-blue-500"
+                  />
+                  <select
+                    value={editPriceCur}
+                    onChange={(e) => setEditPriceCur(e.target.value as any)}
+                    className="bg-slate-800 text-white rounded px-1 py-1 text-sm outline-none border border-slate-600"
+                  >
+                    <option value="USD">USD</option>
+                    <option value="MXN">MXN</option>
+                  </select>
+                  <button
+                    onClick={handleSavePrice}
+                    disabled={savingPrice || !editPriceVal}
+                    className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-sm disabled:opacity-50"
+                  >
+                    {savingPrice ? '…' : 'Guardar'}
+                  </button>
+                  <button
+                    onClick={() => setEditPriceMode(false)}
+                    className="text-slate-400 hover:text-white px-2 py-1"
+                  >✕</button>
+                </div>
+              ) : (
+                price && price.prices?.raw ? (
+                  (() => {
+                    const nm = price.prices.raw.near_mint?.tcgplayer
+                    const lp = price.prices.raw.lightly_played?.tcgplayer
+                    const rows = [
+                      nm && { label: 'Near Mint', market: nm.market, low: nm.low },
+                      lp && { label: 'Lightly Played', market: lp.market, low: lp.low },
+                    ].filter(Boolean) as { label: string; market?: number; low?: number }[]
+                    return rows.map((r, i) => {
+                      const usd = r.market != null && r.market > 0 ? r.market : r.low != null && r.low > 0 ? r.low : null
+                      return (
+                        <div key={i} className="text-xs bg-slate-700/50 rounded p-2 mb-1 flex justify-between items-center">
+                          <span className="text-slate-300">{r.label}</span>
+                          <div className="text-right">
+                            {usd != null ? (
+                              <>
+                                <span className="text-green-400 font-bold">${usd.toFixed(2)} USD</span>
+                                <span className="block text-yellow-400 font-bold">${(usd * usdToMxn).toFixed(0)} MXN</span>
+                              </>
+                            ) : '—'}
+                          </div>
+                        </div>
+                      )
+                    })
+                  })()
+                ) : (
+                  <p className="text-xs text-slate-500 italic bg-slate-700/50 rounded p-2">Sin precio definido</p>
+                )
+              )}
+              {price && price.name && !editPriceMode && (
+                <p className="text-xs text-slate-500 mt-1">{price.name} · {price.rarity} · {price.set?.name}</p>
+              )}
+            </div>
 
             {/* Collection buttons */}
             <div className="p-4 grid grid-cols-2 gap-3 border-t border-slate-700">
