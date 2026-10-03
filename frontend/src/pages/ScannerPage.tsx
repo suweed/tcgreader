@@ -408,31 +408,28 @@ export default function ScannerPage() {
   const [debugError, setDebugError] = useState<string>('')
 
   // Soporte para linterna en dispositivos móviles para eliminar sombras
-  const [hasTorch, setHasTorch] = useState(false)
   const [torchOn, setTorchOn] = useState(false)
-
-  const checkTorch = useCallback(() => {
-    try {
-      const track = (webcamRef.current?.video?.srcObject as MediaStream)?.getVideoTracks()?.[0]
-      if (track && typeof track.getCapabilities === 'function') {
-        const caps = track.getCapabilities() as any
-        if (caps?.torch) {
-          setHasTorch(true)
-        }
-      }
-    } catch {}
-  }, [])
+  const [torchMsg, setTorchMsg] = useState('')
 
   const toggleTorch = useCallback(async () => {
     try {
-      const track = (webcamRef.current?.video?.srcObject as MediaStream)?.getVideoTracks()?.[0]
-      if (track) {
-        const nextState = !torchOn
-        await (track as any).applyConstraints({ advanced: [{ torch: nextState }] })
-        setTorchOn(nextState)
+      const video = webcamRef.current?.video
+      const stream = (video?.srcObject as MediaStream) || (webcamRef.current as any)?.stream
+      const track = stream?.getVideoTracks()?.[0]
+      if (!track) {
+        setTorchMsg('Cámara aún no lista')
+        setTimeout(() => setTorchMsg(''), 2500)
+        return
       }
+      const nextState = !torchOn
+      await (track as any).applyConstraints({ advanced: [{ torch: nextState }] })
+      setTorchOn(nextState)
+      setTorchMsg(nextState ? 'Linterna encendida' : 'Linterna apagada')
+      setTimeout(() => setTorchMsg(''), 2500)
     } catch (e) {
       console.warn('Torch toggle error:', e)
+      setTorchMsg('Linterna no soportada en este navegador o cámara')
+      setTimeout(() => setTorchMsg(''), 3000)
     }
   }, [torchOn])
 
@@ -1069,21 +1066,19 @@ export default function ScannerPage() {
         <h1 className="text-2xl font-bold text-white">📷 Escáner One Piece</h1>
         {cameraOn && (
           <div className="flex items-center gap-2">
-            {hasTorch && (
-              <button
-                type="button"
-                onClick={toggleTorch}
-                className={`text-xs px-2.5 py-1 rounded-full font-medium flex items-center gap-1.5 transition-all ${
-                  torchOn
-                    ? 'bg-yellow-500/25 text-yellow-300 border border-yellow-500/50 shadow-sm shadow-yellow-500/20'
-                    : 'bg-slate-800 text-slate-300 hover:text-white border border-slate-700'
-                }`}
-                title="Activar linterna para eliminar sombras"
-              >
-                <span>{torchOn ? '💡' : '🔦'}</span>
-                <span>{torchOn ? 'Luz ON' : 'Luz'}</span>
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={toggleTorch}
+              className={`text-xs px-2.5 py-1 rounded-full font-medium flex items-center gap-1.5 transition-all ${
+                torchOn
+                  ? 'bg-yellow-500/25 text-yellow-300 border border-yellow-500/50 shadow-sm shadow-yellow-500/20'
+                  : 'bg-slate-800 text-slate-300 hover:text-white border border-slate-700'
+              }`}
+              title="Activar linterna para eliminar sombras"
+            >
+              <span>{torchOn ? '💡' : '🔦'}</span>
+              <span>{torchOn ? 'Luz ON' : 'Luz'}</span>
+            </button>
             <span
               className={`text-xs px-2.5 py-1 rounded-full font-mono flex items-center gap-1.5 ${
                 cvReady ? 'bg-purple-900/60 text-purple-300 border border-purple-700/50' : 'bg-slate-800 text-slate-400'
@@ -1095,6 +1090,14 @@ export default function ScannerPage() {
           </div>
         )}
       </div>
+
+      {torchMsg && (
+        <div className="text-center mb-2 animate-fade-in">
+          <span className="text-xs bg-slate-900/95 text-yellow-300 border border-yellow-500/40 px-3 py-1 rounded-full shadow-md">
+            {torchMsg}
+          </span>
+        </div>
+      )}
 
       <div className="max-w-md mx-auto">
         {!cameraOn ? (
@@ -1130,14 +1133,8 @@ export default function ScannerPage() {
                   height: { ideal: 1080, min: 720 },
                 }}
                 className="w-full h-full object-cover block"
-                onUserMedia={() => {
-                  syncSize()
-                  checkTorch()
-                }}
-                onLoadedMetadata={() => {
-                  syncSize()
-                  checkTorch()
-                }}
+                onUserMedia={syncSize}
+                onLoadedMetadata={syncSize}
               />
               <canvas ref={overlayRef} className="absolute inset-0 w-full h-full pointer-events-none" />
 

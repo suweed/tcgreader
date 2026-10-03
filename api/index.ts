@@ -777,7 +777,30 @@ async function handleOcr(req: VercelRequest, res: VercelResponse) {
 // ----------------------------------------------------------------------------
 // 7. VISUAL CACHE (ORB Descriptors)
 // ----------------------------------------------------------------------------
+let visualTableEnsured = false
+async function ensureVisualCacheTable() {
+  if (visualTableEnsured) return
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS card_visual_cache (
+        card_code VARCHAR(50) NOT NULL REFERENCES cards(card_code) ON DELETE CASCADE,
+        language VARCHAR(10) NOT NULL DEFAULT 'en',
+        orb_descriptors TEXT NOT NULL,
+        rows_count INTEGER NOT NULL DEFAULT 500,
+        updated_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+        PRIMARY KEY (card_code, language)
+      );
+      CREATE INDEX IF NOT EXISTS idx_visual_cache_code ON card_visual_cache(card_code);
+    `)
+    visualTableEnsured = true
+  } catch (e) {
+    console.warn('[VisualCache] Auto-create table notice:', e)
+  }
+}
+
 async function handleVisualCache(req: VercelRequest, res: VercelResponse) {
+  await ensureVisualCacheTable()
+
   if (req.method === 'GET') {
     const codesParam = String(req.query.codes || '').trim()
     const lang = String(req.query.lang || 'en').toLowerCase().trim()
