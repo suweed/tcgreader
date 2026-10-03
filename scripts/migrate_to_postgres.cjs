@@ -91,12 +91,22 @@ async function runMigration() {
                 UNIQUE(card_code, language)
             );
 
+            CREATE TABLE IF NOT EXISTS card_visual_cache (
+                card_code VARCHAR(50) NOT NULL REFERENCES cards(card_code) ON DELETE CASCADE,
+                language VARCHAR(10) NOT NULL DEFAULT 'en',
+                orb_descriptors TEXT NOT NULL,
+                rows_count INTEGER NOT NULL DEFAULT 500,
+                updated_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+                PRIMARY KEY (card_code, language)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_cards_set ON cards(set_id);
             CREATE INDEX IF NOT EXISTS idx_cards_rarity ON cards(rarity);
             CREATE INDEX IF NOT EXISTS idx_cards_category ON cards(category);
             CREATE INDEX IF NOT EXISTS idx_locales_lang ON card_locales(language);
             CREATE INDEX IF NOT EXISTS idx_locales_name ON card_locales(name);
             CREATE INDEX IF NOT EXISTS idx_collection_code ON collection(card_code);
+            CREATE INDEX IF NOT EXISTS idx_visual_cache_code ON card_visual_cache(card_code);
         `);
 
         function safeJson(val, fallback = '[]') {

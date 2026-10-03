@@ -81,4 +81,18 @@ export const api = {
     if (!res.ok) throw new Error(data.error || 'Error del servidor')
     return data
   },
+
+  getVisualCache: (codes: string[], lang = 'en') =>
+    apiFetch<Record<string, { descriptors: string; rows: number }>>(
+      `/visual-cache?codes=${encodeURIComponent(codes.join(','))}&lang=${lang}`
+    ),
+
+  saveVisualCache: (
+    items: Array<{ card_code: string; language?: string; descriptors: string; rows_count?: number }>
+  ) =>
+    apiFetch<{ status: string; saved: number }>('/visual-cache', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items }),
+    }),
 }

@@ -221,3 +221,204 @@ export function compareWithORB(
     } catch {}
   }
 }
+
+/**
+ * Serializa un descriptor cv.Mat (tipo CV_8U con 32 columnas) a Base64.
+ */
+export function matToBase64(mat: any): { base64: string; rows: number } {
+  const rows = mat.rows
+  const bytes = mat.data as Uint8Array
+  let binary = ''
+  const len = bytes.byteLength
+  for (let i = 0; i < len; i += 8192) {
+    binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + 8192)))
+  }
+  return { base64: btoa(binary), rows }
+}
+
+/**
+ * Deserializa un string Base64 a un cv.Mat de OpenCV (tipo CV_8U, 32 columnas).
+ */
+export function base64ToMat(cv: any, base64: string, rows: number): any {
+  const binary = atob(base64)
+  const len = binary.length
+  const bytes = new Uint8Array(len)
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+  return cv.matFromArray(rows, 32, cv.CV_8U, bytes)
+}
+
+/**
+ * Extrae características ORB de una imagen query (canvas) UNA SOLA VEZ para reutilizar en múltiples comparaciones.
+ */
+export function extractQueryFeatures(
+  cv: any,
+  queryCanvas: HTMLCanvasElement
+): { descQuery: any; kpSize: number; cleanup: () => void } | null {
+  let matQuery: any = null
+  let grayQuery: any = null
+  let normQuery: any = null
+  let orb: any = null
+  let kpQuery: any = null
+  let descQuery: any = null
+  let mask: any = null
+
+  try {
+    matQuery = cv.imread(queryCanvas)
+    grayQuery = new cv.Mat()
+    cv.cvtColor(matQuery, grayQuery, cv.COLOR_RGBA2GRAY)
+
+    const stdSize = new cv.Size(300, 419)
+    normQuery = new cv.Mat()
+    cv.resize(grayQuery, normQuery, stdSize, 0, 0, cv.INTER_AREA)
+
+    orb = new cv.ORB(500)
+    kpQuery = new cv.KeyPointVector()
+    descQuery = new cv.Mat()
+    mask = new cv.Mat()
+
+    orb.detectAndCompute(normQuery, mask, kpQuery, descQuery)
+
+    const kpSize = kpQuery.size()
+    if (descQuery.empty() || kpSize === 0) {
+      if (matQuery) matQuery.delete()
+      if (grayQuery) grayQuery.delete()
+      if (normQuery) normQuery.delete()
+      if (orb) orb.delete()
+      if (kpQuery) kpQuery.delete()
+      if (descQuery) descQuery.delete()
+      if (mask) mask.delete()
+      return null
+    }
+
+    if (matQuery) matQuery.delete()
+    if (grayQuery) grayQuery.delete()
+    if (normQuery) normQuery.delete()
+    if (orb) orb.delete()
+    if (kpQuery) kpQuery.delete()
+    if (mask) mask.delete()
+
+    return {
+      descQuery,
+      kpSize,
+      cleanup: () => {
+        try {
+          if (descQuery) descQuery.delete()
+        } catch {}
+      },
+    }
+  } catch (err) {
+    console.warn('[OpenCV] Error extrayendo características de query:', err)
+    try {
+      if (matQuery) matQuery.delete()
+      if (grayQuery) grayQuery.delete()
+      if (normQuery) normQuery.delete()
+      if (orb) orb.delete()
+      if (kpQuery) kpQuery.delete()
+      if (descQuery) descQuery.delete()
+      if (mask) mask.delete()
+    } catch {}
+    return null
+  }
+}
+
+/**
+ * Compara descriptores query contra descriptores precomputados en caché (Base64) a velocidad extrema (sub-milisegundo).
+ */
+export function compareWithCachedDescriptors(
+  cv: any,
+  descQuery: any,
+  queryKpSize: number,
+  cachedBase64: string,
+  cachedRows: number
+): { score: number; matches: number } {
+  let descRef: any = null
+  let matcher: any = null
+  let matches: any = null
+
+  try {
+    descRef = base64ToMat(cv, cachedBase64, cachedRows)
+    if (!descRef || descRef.empty()) {
+      return { score: 0, matches: 0 }
+    }
+
+    matcher = new cv.BFMatcher(cv.NORM_HAMMING, true)
+    matches = new cv.DMatchVector()
+    matcher.match(descQuery, descRef, matches)
+
+    let goodMatches = 0
+    const count = matches.size()
+    for (let i = 0; i < count; i++) {
+      const match = matches.get(i)
+      if (match.distance <= 48) {
+        goodMatches++
+      }
+    }
+
+    const minKp = Math.min(queryKpSize, cachedRows)
+    const score = minKp > 0 ? Math.min(100, Math.round((goodMatches / Math.min(minKp, 100)) * 100)) : 0
+    return { score, matches: goodMatches }
+  } catch (err) {
+    console.warn('[OpenCV] Error comparando con descriptor en caché:', err)
+    return { score: 0, matches: 0 }
+  } finally {
+    try {
+      if (descRef) descRef.delete()
+      if (matcher) matcher.delete()
+      if (matches) matches.delete()
+    } catch {}
+  }
+}
+
+/**
+ * Extrae y serializa descriptores ORB de una imagen de referencia (HTMLImageElement)
+ */
+export function extractImageDescriptors(
+  cv: any,
+  refImage: HTMLImageElement
+): { base64: string; rows: number } | null {
+  let matRef: any = null
+  let grayRef: any = null
+  let normRef: any = null
+  let orb: any = null
+  let kpRef: any = null
+  let descRef: any = null
+  let mask: any = null
+
+  try {
+    matRef = cv.imread(refImage)
+    grayRef = new cv.Mat()
+    cv.cvtColor(matRef, grayRef, cv.COLOR_RGBA2GRAY)
+
+    const stdSize = new cv.Size(300, 419)
+    normRef = new cv.Mat()
+    cv.resize(grayRef, normRef, stdSize, 0, 0, cv.INTER_AREA)
+
+    orb = new cv.ORB(500)
+    kpRef = new cv.KeyPointVector()
+    descRef = new cv.Mat()
+    mask = new cv.Mat()
+
+    orb.detectAndCompute(normRef, mask, kpRef, descRef)
+
+    if (descRef.empty() || kpRef.size() === 0) {
+      return null
+    }
+
+    return matToBase64(descRef)
+  } catch (err) {
+    console.warn('[OpenCV] Error extrayendo descriptores de imagen:', err)
+    return null
+  } finally {
+    try {
+      if (matRef) matRef.delete()
+      if (grayRef) grayRef.delete()
+      if (normRef) normRef.delete()
+      if (orb) orb.delete()
+      if (kpRef) kpRef.delete()
+      if (descRef) descRef.delete()
+      if (mask) mask.delete()
+    } catch {}
+  }
+}

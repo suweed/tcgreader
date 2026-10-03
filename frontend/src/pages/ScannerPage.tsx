@@ -5,7 +5,14 @@ import { api } from '../api'
 import type { Card } from '../types'
 import CardModal from '../components/CardModal'
 import { proxyImg } from '../utils/proxyImg'
-import { loadOpenCV, compareWithORB, preloadImage } from '../utils/cardVision'
+import {
+  loadOpenCV,
+  compareWithORB,
+  preloadImage,
+  extractQueryFeatures,
+  compareWithCachedDescriptors,
+  extractImageDescriptors,
+} from '../utils/cardVision'
 
 interface ScoredCard extends Card {
   visualScore?: number
@@ -222,19 +229,52 @@ function parseOcrText(raw: string): { candidates: { query: string; isCode: boole
   return { candidates: result.slice(0, 8) }
 }
 
-function enhanceContrast(ctx: CanvasRenderingContext2D, width: number, height: number) {
+function enhanceContrastZone(
+  ctx: CanvasRenderingContext2D,
+  startX: number,
+  startY: number,
+  width: number,
+  height: number
+) {
   try {
-    const imgData = ctx.getImageData(0, 0, width, height)
+    const imgData = ctx.getImageData(startX, startY, width, height)
     const d = imgData.data
-    const factor = 1.45
+    const totalPixels = width * height
+    if (totalPixels === 0) return
+
+    // 1. Muestreo de luminancia en escala de grises para análisis de sombra
+    const sampleStep = Math.max(1, Math.floor(totalPixels / 2000))
+    const lums: number[] = []
+    for (let i = 0; i < d.length; i += 4 * sampleStep) {
+      const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
+      lums.push(lum)
+    }
+    lums.sort((a, b) => a - b)
+
+    // Percentiles 3% y 97% para ignorar reflejos o píxeles aislados
+    const pLow = lums[Math.floor(lums.length * 0.03)] ?? 0
+    const pHigh = lums[Math.floor(lums.length * 0.97)] ?? 255
+    const dynamicRange = Math.max(35, pHigh - pLow)
+
+    // Si la zona está en sombra (el brillo superior es menor a 160), aplicamos corrección gamma para levantar medios tonos
+    const isShadowed = pHigh < 160
+    const gamma = isShadowed ? 0.82 : 0.95
+
     for (let i = 0; i < d.length; i += 4) {
       const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
-      const contrasted = Math.min(255, Math.max(0, (gray - 128) * factor + 128))
-      d[i] = contrasted
-      d[i + 1] = contrasted
-      d[i + 2] = contrasted
+      // Normalización adaptativa de niveles (Auto-Levels): estira el rango útil de la sombra eliminando la penumbra del celular
+      let normalized = ((gray - pLow) / dynamicRange) * 255
+      normalized = Math.max(0, Math.min(255, normalized))
+
+      // Corrección gamma para levantar el fondo ensombrecido sin saturar el texto
+      normalized = Math.pow(normalized / 255, gamma) * 255
+
+      d[i] = normalized
+      d[i + 1] = normalized
+      d[i + 2] = normalized
     }
-    ctx.putImageData(imgData, 0, 0)
+
+    ctx.putImageData(imgData, startX, startY)
   } catch {}
 }
 
@@ -265,9 +305,10 @@ function captureZones(video: HTMLVideoElement, scale = 0.74): { textImg: string;
   const codeDstW = Math.floor(codeSrcW * CODE_ZOOM)
   const codeDstH = Math.floor(codeSrcH * CODE_ZOOM)
 
-  // Zona B: Franja de Nombre del Personaje (x: 8% a 92%, y: 74% a 87%)
+  // Zona B: Franja de Nombre del Personaje (x: 8% a 92%, y: 77% a 90%)
+  // Bajada a 77% - 90% para capturar completamente el nombre (Squard, Monkey.D.Luffy, etc.) sin recortar letras inferiores
   const nameSrcX = Math.floor(guide.x + guide.w * 0.08)
-  const nameSrcY = Math.floor(guide.y + guide.h * 0.74)
+  const nameSrcY = Math.floor(guide.y + guide.h * 0.77)
   const nameSrcW = Math.floor(guide.w * 0.84)
   const nameSrcH = Math.floor(guide.h * 0.13)
 
@@ -299,8 +340,11 @@ function captureZones(video: HTMLVideoElement, scale = 0.74): { textImg: string;
   // Dibujar Nombre abajo
   tCtx.drawImage(video, nameSrcX, nameSrcY, nameSrcW, nameSrcH, 0, codeDstH + sep, nameDstW, nameDstH)
 
-  // Realzar contraste para maximizar legibilidad en Google Cloud Vision
-  enhanceContrast(tCtx, totalW, totalH)
+  // Realzar contraste y compensar sombras independientemente para cada zona:
+  // Zona A (Código ID arriba): elimina sombras proyectadas por el celular sobre la esquina inferior
+  enhanceContrastZone(tCtx, 0, 0, codeDstW, codeDstH)
+  // Zona B (Nombre abajo): normaliza la iluminación sobre la franja de nombre
+  enhanceContrastZone(tCtx, 0, codeDstH + sep, nameDstW, nameDstH)
 
   return {
     textImg: textCanvas.toDataURL('image/jpeg', 0.95),
@@ -362,6 +406,35 @@ export default function ScannerPage() {
   const [capturedTextData, setCapturedTextData] = useState<string | null>(null)
   const [debugMatches, setDebugMatches] = useState<DebugMatchInfo[]>([])
   const [debugError, setDebugError] = useState<string>('')
+
+  // Soporte para linterna en dispositivos móviles para eliminar sombras
+  const [hasTorch, setHasTorch] = useState(false)
+  const [torchOn, setTorchOn] = useState(false)
+
+  const checkTorch = useCallback(() => {
+    try {
+      const track = (webcamRef.current?.video?.srcObject as MediaStream)?.getVideoTracks()?.[0]
+      if (track && typeof track.getCapabilities === 'function') {
+        const caps = track.getCapabilities() as any
+        if (caps?.torch) {
+          setHasTorch(true)
+        }
+      }
+    } catch {}
+  }, [])
+
+  const toggleTorch = useCallback(async () => {
+    try {
+      const track = (webcamRef.current?.video?.srcObject as MediaStream)?.getVideoTracks()?.[0]
+      if (track) {
+        const nextState = !torchOn
+        await (track as any).applyConstraints({ advanced: [{ torch: nextState }] })
+        setTorchOn(nextState)
+      }
+    } catch (e) {
+      console.warn('Torch toggle error:', e)
+    }
+  }, [torchOn])
 
   // Precargar OpenCV en segundo plano al iniciar la cámara
   useEffect(() => {
@@ -438,8 +511,8 @@ export default function ScannerPage() {
     ctx.lineTo(x, y + h - cornerLen)
     ctx.stroke()
 
-    // 3. Línea guía para la franja de nombre (al ~74% de la altura de la carta) sin texto
-    const nameLineY = Math.round(y + h * 0.74)
+    // 3. Línea guía para la franja de nombre (al ~77% de la altura de la carta) sin texto
+    const nameLineY = Math.round(y + h * 0.77)
     ctx.strokeStyle = 'rgba(250, 204, 21, 0.75)'
     ctx.lineWidth = 1.5
     ctx.setLineDash([5, 4])
@@ -608,110 +681,157 @@ export default function ScannerPage() {
           for (const card of found.slice(0, 10)) {
             scored.push({ ...card, visualScore: 0, visualMatches: 0 })
           }
-        } else if (candidate.isCode || found.length <= 5) {
-          // Si es búsqueda por código o son pocas cartas (<= 5): evaluar todas directamente
-          for (const card of found) {
-            const locale = card.locales.en ?? card.locales.jp
-            const imgUrl = locale?.img_url ? proxyImg(locale.img_url) : null
-            if (!imgUrl) {
-              scored.push({ ...card, visualScore: 0, visualMatches: 0 })
-              continue
-            }
-            try {
-              const imgEl = await preloadImage(imgUrl)
-              const result = compareWithORB(cv, artCanvas, imgEl)
-              scored.push({
-                ...card,
-                visualScore: result.score,
-                visualMatches: result.matches,
-              })
-            } catch {
-              scored.push({ ...card, visualScore: 0, visualMatches: 0 })
-            }
-          }
         } else {
-          // CASO ESPECIAL: Carta por nombre con muchos resultados (> 5 cartas)
-          // Proceso progresivo por lotes solicitado:
-          // 1. Lote 1: primeras 5 cartas
-          // 2. Si no hay coincidencia >= 50%:
-          //    - Si quedan <= 10 restantes: evalúa todas las restantes
-          //    - Si quedan > 10 restantes: evalúa por lotes de 20 hasta llegar al total
-          const totalCards = found.length
-          let currentIndex = 0
-          let foundWinner = false
+          // 1. Extraer características ORB de la foto de la cámara UNA SOLA VEZ
+          const queryFeatures = extractQueryFeatures(cv, artCanvas)
 
-          // Lote 1: primeras 5 cartas
-          const firstBatchSize = Math.min(5, totalCards)
-          setBatchProgress(`Evaluando lote 1 (1-${firstBatchSize} de ${totalCards})…`)
+          // 2. Consultar descriptores en caché (PostgreSQL) para todos los candidatos
+          const codes = found.map((c) => c.card_code)
+          let cacheMap: Record<string, { descriptors: string; rows: number }> = {}
+          try {
+            cacheMap = await api.getVisualCache(codes)
+          } catch (cacheErr) {
+            console.warn('[VisualCache] Error consultando caché en BD:', cacheErr)
+          }
 
-          for (let i = 0; i < firstBatchSize; i++) {
-            const card = found[i]
+          // Buffer para persistir descriptores calculados al vuelo
+          const newlyExtracted: Array<{ card_code: string; language: string; descriptors: string; rows_count: number }> = []
+
+          // Función optimizada para evaluar una carta:
+          // Si está en caché -> compara en memoria en < 1 milisegundo (sin descargar imagen)
+          // Si no está en caché -> descarga la imagen, calcula, compara y guarda en caché
+          const evaluateCard = async (card: Card): Promise<{ score: number; matches: number }> => {
+            const cached = cacheMap[card.card_code]
+            if (cached && queryFeatures) {
+              return compareWithCachedDescriptors(
+                cv,
+                queryFeatures.descQuery,
+                queryFeatures.kpSize,
+                cached.descriptors,
+                cached.rows
+              )
+            }
+
             const locale = card.locales.en ?? card.locales.jp
             const imgUrl = locale?.img_url ? proxyImg(locale.img_url) : null
-            if (!imgUrl) {
-              scored.push({ ...card, visualScore: 0, visualMatches: 0 })
-              continue
-            }
+            if (!imgUrl) return { score: 0, matches: 0 }
+
             try {
               const imgEl = await preloadImage(imgUrl)
-              const result = compareWithORB(cv, artCanvas, imgEl)
+              const extracted = extractImageDescriptors(cv, imgEl)
+              if (extracted) {
+                newlyExtracted.push({
+                  card_code: card.card_code,
+                  language: 'en',
+                  descriptors: extracted.base64,
+                  rows_count: extracted.rows,
+                })
+                cacheMap[card.card_code] = {
+                  descriptors: extracted.base64,
+                  rows: extracted.rows,
+                }
+              }
+
+              if (queryFeatures && extracted) {
+                return compareWithCachedDescriptors(
+                  cv,
+                  queryFeatures.descQuery,
+                  queryFeatures.kpSize,
+                  extracted.base64,
+                  extracted.rows
+                )
+              } else {
+                return compareWithORB(cv, artCanvas, imgEl)
+              }
+            } catch {
+              return { score: 0, matches: 0 }
+            }
+          }
+
+          if (candidate.isCode || found.length <= 5) {
+            // Si es búsqueda por código o son pocas cartas (<= 5): evaluar todas directamente
+            for (const card of found) {
+              const result = await evaluateCard(card)
               scored.push({
                 ...card,
                 visualScore: result.score,
                 visualMatches: result.matches,
               })
-            } catch {
-              scored.push({ ...card, visualScore: 0, visualMatches: 0 })
             }
-          }
+          } else {
+            // CASO ESPECIAL: Carta por nombre con muchos resultados (> 5 cartas)
+            // Proceso progresivo por lotes solicitado:
+            // 1. Lote 1: primeras 5 cartas
+            // 2. Si no hay coincidencia >= 50%:
+            //    - Si quedan <= 10 restantes: evalúa todas las restantes
+            //    - Si quedan > 10 restantes: evalúa por lotes de 20 hasta llegar al total
+            const totalCards = found.length
+            let currentIndex = 0
+            let foundWinner = false
 
-          currentIndex = firstBatchSize
+            // Lote 1: primeras 5 cartas
+            const firstBatchSize = Math.min(5, totalCards)
+            setBatchProgress(`Evaluando lote 1 (1-${firstBatchSize} de ${totalCards})…`)
 
-          // Verificar si alguna de las primeras 5 alcanzó >= 50%
-          const bestInBatch1 = scored.reduce((max, c) => Math.max(max, c.visualScore ?? 0), 0)
-          if (bestInBatch1 >= 50) {
-            foundWinner = true
-          }
-
-          // Lotes subsiguientes si no se alcanzó el 50%
-          let batchNumber = 2
-          while (!foundWinner && currentIndex < totalCards) {
-            const remaining = totalCards - currentIndex
-            const currentBatchSize = remaining <= 10 ? remaining : Math.min(20, remaining)
-            const endIndex = currentIndex + currentBatchSize
-
-            setBatchProgress(`Evaluando lote ${batchNumber} (${currentIndex + 1}-${endIndex} de ${totalCards})…`)
-
-            for (let i = currentIndex; i < endIndex; i++) {
+            for (let i = 0; i < firstBatchSize; i++) {
               const card = found[i]
-              const locale = card.locales.en ?? card.locales.jp
-              const imgUrl = locale?.img_url ? proxyImg(locale.img_url) : null
-              if (!imgUrl) {
-                scored.push({ ...card, visualScore: 0, visualMatches: 0 })
-                continue
-              }
-              try {
-                const imgEl = await preloadImage(imgUrl)
-                const result = compareWithORB(cv, artCanvas, imgEl)
+              const result = await evaluateCard(card)
+              scored.push({
+                ...card,
+                visualScore: result.score,
+                visualMatches: result.matches,
+              })
+            }
+
+            currentIndex = firstBatchSize
+
+            // Verificar si alguna de las primeras 5 alcanzó >= 50%
+            const bestInBatch1 = scored.reduce((max, c) => Math.max(max, c.visualScore ?? 0), 0)
+            if (bestInBatch1 >= 50) {
+              foundWinner = true
+            }
+
+            // Lotes subsiguientes si no se alcanzó el 50%
+            let batchNumber = 2
+            while (!foundWinner && currentIndex < totalCards) {
+              const remaining = totalCards - currentIndex
+              const currentBatchSize = remaining <= 10 ? remaining : Math.min(20, remaining)
+              const endIndex = currentIndex + currentBatchSize
+
+              setBatchProgress(`Evaluando lote ${batchNumber} (${currentIndex + 1}-${endIndex} de ${totalCards})…`)
+
+              for (let i = currentIndex; i < endIndex; i++) {
+                const card = found[i]
+                const result = await evaluateCard(card)
                 scored.push({
                   ...card,
                   visualScore: result.score,
                   visualMatches: result.matches,
                 })
-              } catch {
-                scored.push({ ...card, visualScore: 0, visualMatches: 0 })
+              }
+
+              currentIndex = endIndex
+              batchNumber++
+
+              // Si en este lote apareció una coincidencia >= 50%, detenemos la búsqueda
+              const currentBest = scored.reduce((max, c) => Math.max(max, c.visualScore ?? 0), 0)
+              if (currentBest >= 50) {
+                foundWinner = true
+                break
               }
             }
+          }
 
-            currentIndex = endIndex
-            batchNumber++
+          // Guardar descriptores recién generados en PostgreSQL para futuras comparaciones instantáneas
+          if (newlyExtracted.length > 0) {
+            api.saveVisualCache(newlyExtracted).catch((err) => {
+              console.warn('[VisualCache] Error guardando descriptores en BD:', err)
+            })
+          }
 
-            // Si en este lote apareció una coincidencia >= 50%, detenemos la búsqueda
-            const currentBest = scored.reduce((max, c) => Math.max(max, c.visualScore ?? 0), 0)
-            if (currentBest >= 50) {
-              foundWinner = true
-              break
-            }
+          // Liberar recursos de la imagen capturada
+          if (queryFeatures) {
+            queryFeatures.cleanup()
           }
         }
 
@@ -948,14 +1068,31 @@ export default function ScannerPage() {
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-2xl font-bold text-white">📷 Escáner One Piece</h1>
         {cameraOn && (
-          <span
-            className={`text-xs px-2.5 py-1 rounded-full font-mono flex items-center gap-1.5 ${
-              cvReady ? 'bg-purple-900/60 text-purple-300 border border-purple-700/50' : 'bg-slate-800 text-slate-400'
-            }`}
-          >
-            <span className={`w-2 h-2 rounded-full ${cvReady ? 'bg-purple-400 animate-ping' : 'bg-slate-500'}`} />
-            {cvReady ? 'OpenCV activo' : 'Iniciando visión…'}
-          </span>
+          <div className="flex items-center gap-2">
+            {hasTorch && (
+              <button
+                type="button"
+                onClick={toggleTorch}
+                className={`text-xs px-2.5 py-1 rounded-full font-medium flex items-center gap-1.5 transition-all ${
+                  torchOn
+                    ? 'bg-yellow-500/25 text-yellow-300 border border-yellow-500/50 shadow-sm shadow-yellow-500/20'
+                    : 'bg-slate-800 text-slate-300 hover:text-white border border-slate-700'
+                }`}
+                title="Activar linterna para eliminar sombras"
+              >
+                <span>{torchOn ? '💡' : '🔦'}</span>
+                <span>{torchOn ? 'Luz ON' : 'Luz'}</span>
+              </button>
+            )}
+            <span
+              className={`text-xs px-2.5 py-1 rounded-full font-mono flex items-center gap-1.5 ${
+                cvReady ? 'bg-purple-900/60 text-purple-300 border border-purple-700/50' : 'bg-slate-800 text-slate-400'
+              }`}
+            >
+              <span className={`w-2 h-2 rounded-full ${cvReady ? 'bg-purple-400 animate-ping' : 'bg-slate-500'}`} />
+              {cvReady ? 'OpenCV activo' : 'Iniciando visión…'}
+            </span>
+          </div>
         )}
       </div>
 
@@ -993,8 +1130,14 @@ export default function ScannerPage() {
                   height: { ideal: 1080, min: 720 },
                 }}
                 className="w-full h-full object-cover block"
-                onUserMedia={syncSize}
-                onLoadedMetadata={syncSize}
+                onUserMedia={() => {
+                  syncSize()
+                  checkTorch()
+                }}
+                onLoadedMetadata={() => {
+                  syncSize()
+                  checkTorch()
+                }}
               />
               <canvas ref={overlayRef} className="absolute inset-0 w-full h-full pointer-events-none" />
 

@@ -68,6 +68,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return await handleImg(req, res, url)
       case 'ocr':
         return await handleOcr(req, res)
+      case 'visual-cache':
+        return await handleVisualCache(req, res)
       case 'health':
       case '':
         return res.status(200).json({
@@ -770,4 +772,68 @@ async function handleOcr(req: VercelRequest, res: VercelResponse) {
     text: fullText,
     blocks,
   })
+}
+
+// ----------------------------------------------------------------------------
+// 7. VISUAL CACHE (ORB Descriptors)
+// ----------------------------------------------------------------------------
+async function handleVisualCache(req: VercelRequest, res: VercelResponse) {
+  if (req.method === 'GET') {
+    const codesParam = String(req.query.codes || '').trim()
+    const lang = String(req.query.lang || 'en').toLowerCase().trim()
+    if (!codesParam) return res.status(200).json({})
+
+    const codes = codesParam
+      .split(',')
+      .map((c) => normalizeCardCode(c.trim()))
+      .filter(Boolean)
+    if (codes.length === 0) return res.status(200).json({})
+
+    const limitedCodes = codes.slice(0, 200)
+    const placeholders = limitedCodes.map((_, i) => `$${i + 2}`).join(', ')
+    const sql = `
+      SELECT card_code, orb_descriptors, rows_count
+      FROM card_visual_cache
+      WHERE language = $1 AND card_code IN (${placeholders})
+    `
+    const dbRes = await query(sql, [lang, ...limitedCodes])
+    const result: Record<string, { descriptors: string; rows: number }> = {}
+    for (const r of dbRes.rows) {
+      result[r.card_code] = {
+        descriptors: r.orb_descriptors,
+        rows: Number(r.rows_count) || 500,
+      }
+    }
+    return res.status(200).json(result)
+  }
+
+  if (req.method === 'POST') {
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {}
+    const items: Array<{ card_code: string; language?: string; descriptors: string; rows_count?: number }> =
+      Array.isArray(body.items) ? body.items : [body]
+
+    let saved = 0
+    for (const item of items) {
+      if (!item.card_code || !item.descriptors) continue
+      const cardCode = normalizeCardCode(item.card_code)
+      const lang = String(item.language || 'en').toLowerCase().trim()
+      const rows = Number(item.rows_count || 500)
+
+      await query(
+        `
+        INSERT INTO card_visual_cache (card_code, language, orb_descriptors, rows_count, updated_at)
+        VALUES ($1, $2, $3, $4, EXTRACT(EPOCH FROM NOW())::BIGINT)
+        ON CONFLICT (card_code, language)
+        DO UPDATE SET orb_descriptors = EXCLUDED.orb_descriptors,
+                      rows_count = EXCLUDED.rows_count,
+                      updated_at = EXCLUDED.updated_at
+      `,
+        [cardCode, lang, item.descriptors, rows]
+      )
+      saved++
+    }
+    return res.status(200).json({ status: 'ok', saved })
+  }
+
+  return res.status(405).json({ error: 'Método no permitido' })
 }
