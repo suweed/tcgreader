@@ -456,7 +456,7 @@ async function handleCards(req: VercelRequest, res: VercelResponse, segments: st
   const whereSQL = where.length > 0 ? 'WHERE ' + where.join(' AND ') : ''
 
   let orderSQL = 's.code ASC, c.card_code ASC'
-  if (sort === 'newest' || (!sort && (owned === 'true' || Boolean(ownedLang)))) {
+  if (sort === 'newest' || (!sort && (owned === 'true' || Boolean(ownedLang) || category === 'DON!!'))) {
     orderSQL = 'COALESCE(GREATEST(col_en.added_at, col_jp.added_at), col_en.added_at, col_jp.added_at, 0) DESC, s.code ASC, c.card_code ASC'
   } else if (sort === 'oldest') {
     orderSQL = 'COALESCE(LEAST(col_en.added_at, col_jp.added_at), col_en.added_at, col_jp.added_at, 9999999999) ASC, s.code ASC, c.card_code ASC'

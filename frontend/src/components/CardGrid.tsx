@@ -9,9 +9,10 @@ interface Props {
   collectionMode?: boolean
   initialQ?: string
   forceCategory?: string
+  onCollectionChange?: () => void
 }
 
-export default function CardGrid({ initialFilters = {}, showOwnedToggle = true, collectionMode = false, initialQ, forceCategory }: Props) {
+export default function CardGrid({ initialFilters = {}, showOwnedToggle = true, collectionMode = false, initialQ, forceCategory, onCollectionChange }: Props) {
   const [cards, setCards] = useState<Card[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -220,26 +221,15 @@ export default function CardGrid({ initialFilters = {}, showOwnedToggle = true, 
 
             <select
               onChange={(e) => handleFilter('sort', e.target.value)}
-              value={filters.sort ?? (collectionMode ? 'newest' : '')}
+              value={filters.sort ?? (collectionMode || forceCategory === 'DON!!' ? 'newest' : '')}
               className={selectClass + ' ml-auto'}
             >
-              {collectionMode ? (
-                <>
-                  <option value="newest">Agregadas: más recientes</option>
-                  <option value="oldest">Agregadas: más antiguas</option>
-                  <option value="">Set A→Z</option>
-                  <option value="set_desc">Set Z→A</option>
-                  <option value="name_asc">Nombre A→Z</option>
-                  <option value="name_desc">Nombre Z→A</option>
-                </>
-              ) : (
-                <>
-                  <option value="">Set A→Z</option>
-                  <option value="set_desc">Set Z→A</option>
-                  <option value="name_asc">Nombre A→Z</option>
-                  <option value="name_desc">Nombre Z→A</option>
-                </>
-              )}
+              <option value="newest">Agregadas: más recientes</option>
+              <option value="oldest">Agregadas: más antiguas</option>
+              <option value="">Set A→Z</option>
+              <option value="set_desc">Set Z→A</option>
+              <option value="name_asc">Nombre A→Z</option>
+              <option value="name_desc">Nombre Z→A</option>
             </select>
           </div>
 
@@ -312,7 +302,10 @@ export default function CardGrid({ initialFilters = {}, showOwnedToggle = true, 
             key={card.card_code}
             card={card}
             lang={lang}
-            onCollectionChange={() => loadCards({ ...filters, page })}
+            onCollectionChange={() => {
+              loadCards({ ...filters, page })
+              onCollectionChange?.()
+            }}
           />
         ))}
       </div>

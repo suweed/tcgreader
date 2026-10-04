@@ -74,7 +74,7 @@ export default function DonPage() {
       )}
 
       {/* Reutilizamos el CardGrid pasándole el forceCategory para ocultar la barra y forzar la búsqueda */}
-      <CardGrid forceCategory="DON!!" />
+      <CardGrid forceCategory="DON!!" initialFilters={{ sort: 'newest' }} onCollectionChange={loadStats} />
 
       {scannedCard && (
         <CardModal cardCode={scannedCard} onClose={closeScannedCard} onCollectionChange={loadStats} initialLang="en" />

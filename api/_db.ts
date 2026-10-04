@@ -14,6 +14,8 @@ function cleanSqlAndParamsForSqlite(sql: string, params: unknown[] = []): { clea
     .replace(/EXTRACT\(EPOCH FROM NOW\(\)\)/gi, 'unixepoch()')
     .replace(/NULLS LAST/gi, '')
     .replace(/\bILIKE\b/gi, 'LIKE')
+    .replace(/\bGREATEST\b/gi, 'MAX')
+    .replace(/\bLEAST\b/gi, 'MIN')
 
   cleaned = cleaned.replace(/\$([0-9]+)/g, (_, numStr) => {
     const idx = parseInt(numStr, 10) - 1
