@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import type { Set } from '../types'
 import { extractImageDescriptors } from '../utils/cardVision'
+import ImageCropperModal from './ImageCropperModal'
 
 interface Props {
   isOpen: boolean
@@ -23,6 +24,9 @@ export default function RegisterCardModal({
 }: Props) {
   const navigate = useNavigate()
 
+  const [currentImage, setCurrentImage] = useState<string | null>(capturedArtData)
+  const [showCropper, setShowCropper] = useState(false)
+
   const [cardCode, setCardCode] = useState('')
   const [autoCode, setAutoCode] = useState('')
   const [name, setName] = useState('')
@@ -35,11 +39,13 @@ export default function RegisterCardModal({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  // Cargar sets disponibles y código automático CIM consecutivo
+  // Cargar sets disponibles, imagen inicial y código automático CIM consecutivo
   useEffect(() => {
     if (!isOpen) return
 
     setError('')
+    setCurrentImage(capturedArtData)
+
     // Obtener sets
     api.getSets().then((loadedSets) => {
       setSets(loadedSets)
@@ -76,7 +82,7 @@ export default function RegisterCardModal({
     } else {
       setName('')
     }
-  }, [isOpen, detectedCandidates, isDonDetected])
+  }, [isOpen, capturedArtData, detectedCandidates, isDonDetected])
 
   if (!isOpen) return null
 
@@ -99,15 +105,17 @@ export default function RegisterCardModal({
     setLoading(true)
     setError('')
 
+    const finalImage = currentImage || capturedArtData
+
     try {
       let descriptors: string | undefined
       let rowsCount: number | undefined
 
-      // Si OpenCV está cargado y tenemos la foto del escáner, extraemos descriptores visuales
-      if (typeof (window as any).cv !== 'undefined' && capturedArtData) {
+      // Si OpenCV está cargado y tenemos la foto (recortada o normal), extraemos descriptores visuales
+      if (typeof (window as any).cv !== 'undefined' && finalImage) {
         try {
           const imgEl = new Image()
-          imgEl.src = capturedArtData
+          imgEl.src = finalImage
           await new Promise((resolve) => {
             imgEl.onload = resolve
             imgEl.onerror = resolve
@@ -130,7 +138,7 @@ export default function RegisterCardModal({
         rarity,
         language,
         effect: effect.trim() || undefined,
-        img_base64: capturedArtData || undefined,
+        img_base64: finalImage || undefined,
         descriptors,
         rows_count: rowsCount,
       })
@@ -153,9 +161,11 @@ export default function RegisterCardModal({
     }
   }
 
+  const displayImage = currentImage || capturedArtData
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
-      <div className="relative w-full max-w-xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden my-6">
+      <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden my-6">
         {/* Cabecera */}
         <div className="flex items-center justify-between px-5 py-4 bg-slate-800/90 border-b border-slate-700">
           <div className="flex items-center gap-2">
@@ -178,24 +188,31 @@ export default function RegisterCardModal({
             </div>
           )}
 
-          <div className="flex flex-col sm:flex-row gap-4 items-start">
-            {/* Foto tomada por el escáner */}
-            <div className="w-full sm:w-40 shrink-0 text-center">
-              <p className="text-[11px] font-semibold text-slate-400 mb-1.5">Foto de Análisis</p>
-              {capturedArtData ? (
-                <img
-                  src={capturedArtData}
-                  alt="Captura"
-                  className="w-32 sm:w-full h-44 object-contain rounded-xl mx-auto border-2 border-purple-500/50 shadow-md bg-black"
-                />
+          <div className="flex flex-col sm:flex-row gap-5 items-start">
+            {/* Foto tomada por el escáner (más grande y sin borde morado) */}
+            <div className="w-full sm:w-52 shrink-0 text-center">
+              <p className="text-[11px] font-semibold text-slate-400 mb-1.5">Foto de la Carta</p>
+              {displayImage ? (
+                <div className="relative inline-block w-full">
+                  <img
+                    src={displayImage}
+                    alt="Foto capturada"
+                    className="w-44 sm:w-full h-60 sm:h-76 object-contain rounded-lg mx-auto border border-slate-700 bg-black shadow-md"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowCropper(true)}
+                    className="mt-2.5 w-full py-2 px-3 bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 flex items-center justify-center gap-1.5 transition-colors shadow-sm"
+                  >
+                    <span>✂️</span>
+                    <span>Recortar imagen</span>
+                  </button>
+                </div>
               ) : (
-                <div className="w-32 sm:w-full h-44 bg-slate-800 rounded-xl mx-auto flex items-center justify-center text-3xl border border-slate-700">
+                <div className="w-44 sm:w-full h-60 sm:h-76 bg-slate-800 rounded-lg mx-auto flex items-center justify-center text-3xl border border-slate-700">
                   🃏
                 </div>
               )}
-              <span className="text-[10px] text-purple-400 font-mono mt-1 block">
-                ✓ Usada para OpenCV
-              </span>
             </div>
 
             {/* Campos principales */}
@@ -365,7 +382,7 @@ export default function RegisterCardModal({
             <button
               type="submit"
               disabled={loading}
-              className="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 active:from-blue-700 active:to-indigo-700 text-white text-xs font-bold rounded-xl shadow-lg shadow-blue-900/30 transition-all flex items-center gap-2 disabled:opacity-50"
+              className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 active:from-blue-700 active:to-indigo-700 text-white text-xs font-bold rounded-xl shadow-lg shadow-blue-900/30 transition-all flex items-center gap-2 disabled:opacity-50"
             >
               {loading ? (
                 <>
@@ -375,12 +392,20 @@ export default function RegisterCardModal({
               ) : (
                 <>
                   <span>💾</span>
-                  <span>Guardar en Álbum y Colección</span>
+                  <span>Guardar</span>
                 </>
               )}
             </button>
           </div>
         </form>
+
+        {/* Modal de recorte de imagen */}
+        <ImageCropperModal
+          isOpen={showCropper}
+          imageUrl={displayImage}
+          onClose={() => setShowCropper(false)}
+          onApplyCrop={(cropped) => setCurrentImage(cropped)}
+        />
       </div>
     </div>
   )
