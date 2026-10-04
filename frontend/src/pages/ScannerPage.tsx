@@ -726,6 +726,10 @@ export default function ScannerPage() {
         const candidateList = Array.isArray(candidatesToTry) ? candidatesToTry : [candidatesToTry]
       setCurrentSearchQuery("")
         
+        // Detect if physical card is Japanese by checking if any candidate contains Japanese characters
+        const isJapaneseCard = candidateList.some(c => /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/.test(c.query))
+        const targetLang = isJapaneseCard ? 'jp' : 'en'
+
         let bestOverallCards: (Card & { visualScore?: number; visualMatches?: number })[] = []
         let bestOverallCandidate: { query: string; isCode: boolean } | null = null
         let bestOverallScore = -1
@@ -797,7 +801,7 @@ export default function ScannerPage() {
           const codes = found.map((c) => c.card_code)
           let cacheMap: Record<string, { descriptors: string; rows: number }> = {}
           try {
-            cacheMap = await api.getVisualCache(codes)
+            cacheMap = await api.getVisualCache(codes, targetLang)
           } catch (cacheErr) {}
 
           const evaluateCard = async (card: Card): Promise<{ score: number; matches: number }> => {
@@ -807,14 +811,14 @@ export default function ScannerPage() {
             if (cached && queryFeatures) {
               return compareWithCachedDescriptors(cv, queryFeatures.descQuery, queryFeatures.kpSize, cached.descriptors, cached.rows)
             }
-            const locale = card.locales.en ?? card.locales.jp
+            const locale = targetLang === 'jp' ? (card.locales.jp ?? card.locales.en) : (card.locales.en ?? card.locales.jp)
             const imgUrl = locale?.img_url ? proxyImg(locale.img_url) : null
             if (!imgUrl) return { score: 0, matches: 0 }
             try {
               const imgEl = await preloadImage(imgUrl)
               const extracted = extractImageDescriptors(cv, imgEl)
               if (extracted) {
-                newlyExtracted.push({ card_code: card.card_code, language: 'en', descriptors: extracted.base64, rows_count: extracted.rows })
+                newlyExtracted.push({ card_code: card.card_code, language: targetLang, descriptors: extracted.base64, rows_count: extracted.rows })
                 cacheMap[card.card_code] = { descriptors: extracted.base64, rows: extracted.rows }
               }
               if (queryFeatures && extracted) {
