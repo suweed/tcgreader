@@ -453,6 +453,7 @@ export default function ScannerPage() {
   const [cvReady, setCvReady] = useState(false)
   const [scanState, setScanState] = useState<ScanState>('ready')
   const [isCovered, setIsCovered] = useState(false)
+  const [currentSearchQuery, setCurrentSearchQuery] = useState("")
   const [detectedText, setDetectedText] = useState('')
   const [detectedQuery, setDetectedQuery] = useState('')
   const [candidates, setCandidates] = useState<{ query: string; isCode: boolean }[]>([])
@@ -722,6 +723,7 @@ export default function ScannerPage() {
       setBatchProgress('')
       try {
         const candidateList = Array.isArray(candidatesToTry) ? candidatesToTry : [candidatesToTry]
+      setCurrentSearchQuery("")
         
         let bestOverallCards: (Card & { visualScore?: number; visualMatches?: number })[] = []
         let bestOverallCandidate: { query: string; isCode: boolean } | null = null
@@ -741,6 +743,7 @@ export default function ScannerPage() {
         const newlyExtracted: Array<any> = []
 
         for (const candidate of candidateList) {
+          setCurrentSearchQuery(candidate.query)
           let found: Card[] = []
 
           if (candidate.isCode) {
@@ -960,6 +963,7 @@ if (isDominantWinner && best) {
     if (rafRef.current) cancelAnimationFrame(rafRef.current)
     setScanState('scanning')
     setDetectedText('')
+    setCurrentSearchQuery("")
     setDetectedQuery('')
     setCards([])
     setDebugMatches([])
@@ -1191,10 +1195,6 @@ if (isDominantWinner && best) {
       <div className="max-w-md mx-auto">
         {!cameraOn ? (
           <div className="text-center py-10 bg-slate-900/60 border border-slate-800 rounded-2xl p-6">
-            <h2 className="text-white font-bold text-lg mb-2">Escáner con IA y Visión Computarizada</h2>
-            <p className="text-slate-400 text-sm mb-6 max-w-xs mx-auto">
-              Centra la carta entre las 4 esquinas del marco para escanear.
-            </p>
             <button
               onClick={() => setCameraOn(true)}
               className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-600/30 flex items-center justify-center gap-2"
@@ -1237,16 +1237,23 @@ if (isDominantWinner && best) {
                   <h3 className="text-white font-bold text-lg mb-1">
                     {scanState === 'scanning' ? '¡Foto capturada!' : 'Buscando coincidencias…'}
                   </h3>
-                  <p className="text-blue-300 text-xs font-medium max-w-xs mb-4 animate-pulse">
+                  <p className="text-blue-300 text-xs font-medium max-w-xs mb-3 animate-pulse">
                     {scanState === 'scanning'
                       ? 'Analizando código y texto con IA…'
-                      : 'Comparando ilustración con OpenCV…'}
+                      : 'Buscando carta...'}
                   </p>
+
+                  {scanState === 'matching' && currentSearchQuery && (
+                    <div className="bg-slate-900/80 border border-slate-700 rounded-lg px-4 py-2 mb-4 max-w-[80%] mx-auto shadow-inner truncate">
+                      <span className="text-slate-400 text-[10px] uppercase tracking-wider font-bold block mb-0.5">Buscando:</span>
+                      <span className="text-white font-mono font-bold text-sm">{currentSearchQuery}</span>
+                    </div>
+                  )}
                   
                   {scanState === 'matching' && (
                     <button
                       onClick={handleScanAgain}
-                      className="mt-2 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-5 py-2 rounded-lg text-sm transition-colors border border-slate-700"
+                      className="text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-5 py-2 rounded-lg text-sm transition-colors border border-slate-700"
                     >
                       Cancelar
                     </button>
@@ -1355,7 +1362,6 @@ if (isDominantWinner && best) {
                         : `5 resultados más cercanos:`}
                     </span>
                   </p>
-                  <span className="text-[11px] text-slate-400">Toca para abrir detalle</span>
                 </div>
                 {!selectedCard && (
                   <div className="bg-yellow-950/40 border border-yellow-800/50 rounded-lg p-2.5 mb-3 text-xs text-yellow-300">
