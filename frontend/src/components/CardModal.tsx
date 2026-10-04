@@ -3,6 +3,7 @@ import { api } from '../api'
 import type { Card, PriceResult } from '../types'
 import { proxyImg } from '../utils/proxyImg'
 import { useSettings } from '../context/SettingsContext'
+import RegisterCardModal from './RegisterCardModal'
 
 interface Props {
   cardCode: string
@@ -26,6 +27,7 @@ export default function CardModal({ cardCode, onClose, onCollectionChange, initi
   const [editPriceVal, setEditPriceVal] = useState('')
   const [editPriceCur, setEditPriceCur] = useState<'USD'|'MXN'>('USD')
   const [savingPrice, setSavingPrice] = useState(false)
+  const [editModalOpen, setEditModalOpen] = useState(false)
 
   useEffect(() => {
     api.getCard(cardCode).then((c) => {
@@ -74,6 +76,16 @@ export default function CardModal({ cardCode, onClose, onCollectionChange, initi
       setAdding(null)
     }
   }
+
+  const isCustomCard = Boolean(
+    card && (
+      card.card_code.startsWith('CIM-') ||
+      card.set_code === 'PROMO-ALT' ||
+      card.rarity === 'Custom' ||
+      card.locales.en?.img_url?.startsWith('data:') ||
+      card.locales.jp?.img_url?.startsWith('data:')
+    )
+  )
 
   const locale = card?.locales[lang] ?? card?.locales.en ?? card?.locales.jp
 
@@ -181,7 +193,20 @@ export default function CardModal({ cardCode, onClose, onCollectionChange, initi
                   ))}
                 </div>
               </div>
-              <button onClick={onClose} className="text-slate-400 hover:text-white text-xl font-bold ml-2 shrink-0">✕</button>
+              <div className="flex items-center gap-2 shrink-0 ml-2">
+                {isCustomCard && (
+                  <button
+                    type="button"
+                    onClick={() => setEditModalOpen(true)}
+                    className="text-xs bg-slate-700 hover:bg-slate-600 active:bg-slate-500 text-yellow-300 font-semibold px-2.5 py-1.5 rounded-lg border border-slate-600 flex items-center gap-1 transition-colors shadow-sm"
+                    title="Editar información y foto de esta tarjeta custom"
+                  >
+                    <span>✏️</span>
+                    <span>Editar</span>
+                  </button>
+                )}
+                <button onClick={onClose} className="text-slate-400 hover:text-white text-xl font-bold p-1">✕</button>
+              </div>
             </div>
 
             {/* Lang tabs */}
@@ -398,6 +423,20 @@ export default function CardModal({ cardCode, onClose, onCollectionChange, initi
         )}
       </div>
     </div>
+
+    {/* Modal para editar datos y foto de carta personalizada */}
+    {editModalOpen && card && (
+      <RegisterCardModal
+        isOpen={editModalOpen}
+        onClose={() => setEditModalOpen(false)}
+        initialCard={card}
+        initialLang={lang}
+        onCardUpdated={() => {
+          api.getCard(cardCode).then((c) => setCard(c))
+          onCollectionChange?.()
+        }}
+      />
+    )}
     </>
   )
 }

@@ -212,13 +212,17 @@ async function handleCards(req: VercelRequest, res: VercelResponse, segments: st
       [cardCode, language, name, effect, imgUrl]
     )
 
-    // 3. Insertar / Actualizar en collection (para que forme parte de mi colección de inmediato)
+    // 3. Insertar / Actualizar en collection
+    const isEdit = Boolean(body.is_edit)
+    const onConflictCollection = isEdit
+      ? 'ON CONFLICT (card_code, language) DO NOTHING'
+      : 'ON CONFLICT (card_code, language) DO UPDATE SET quantity = collection.quantity + 1'
+
     await query(
       `
       INSERT INTO collection (card_code, language, quantity, condition, added_at)
       VALUES ($1, $2, 1, 'near_mint', EXTRACT(EPOCH FROM NOW())::BIGINT)
-      ON CONFLICT (card_code, language) DO UPDATE SET
-        quantity = collection.quantity + 1
+      ${onConflictCollection}
     `,
       [cardCode, language]
     )

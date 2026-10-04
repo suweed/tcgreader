@@ -120,6 +120,7 @@ export interface CreateCustomCardPayload {
   power?: number | null
   descriptors?: string
   rows_count?: number
+  is_edit?: boolean
 }
 
 export interface CreateCustomCardResponse {
