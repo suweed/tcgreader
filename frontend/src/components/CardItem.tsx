@@ -78,7 +78,7 @@ export default function CardItem({ card, lang, onCollectionChange }: Props) {
         {/* Rarity / code */}
         <div className="p-1.5">
           <p className="text-xs text-white truncate">{decodeHtml(locale?.name)}</p>
-          <p className="text-xs text-slate-400 font-mono truncate">{card.card_code}</p>
+          <p className="text-[10px] text-slate-400 font-mono">{card.card_code}</p>
         </div>
       </div>
 

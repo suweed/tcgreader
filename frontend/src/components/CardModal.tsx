@@ -30,7 +30,7 @@ export default function CardModal({ cardCode, onClose, onCollectionChange, initi
   useEffect(() => {
     api.getCard(cardCode).then((c) => {
       setCard(c)
-      setLang(c.locales.en ? 'en' : 'jp')
+      setLang(prev => c.locales[prev] ? prev : (c.locales.en ? 'en' : 'jp'))
       setLoading(false)
     })
     api.getPrice(cardCode).then(setPrice).catch(() => {})
