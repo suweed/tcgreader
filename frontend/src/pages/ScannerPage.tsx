@@ -1,5 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import Webcam from 'react-webcam'
 import { api } from '../api'
 import type { Card } from '../types'
@@ -430,6 +430,7 @@ function drawRoundRect(
 }
 
 export default function ScannerPage() {
+  const navigate = useNavigate()
   const webcamRef = useRef<Webcam>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -1130,7 +1131,7 @@ if (isDominantWinner && best) {
     ready: 'Centra la carta y el código ID en el marco',
     detecting: 'Enfocando... mantén quieta la carta para capturar',
     scanning: 'Leyendo código y texto con OCR…',
-    matching: batchProgress || 'Comparando ilustración con OpenCV…',
+    matching: 'Buscando coincidencias…',
     choosing: 'Selecciona el texto a buscar',
     done: cards.length > 0 ? `${cards.length} resultado(s) encontrado(s)` : 'Sin resultados',
     error: 'No se identificó el código. Centra la esquina inferior derecha y reintenta.',
@@ -1167,14 +1168,14 @@ if (isDominantWinner && best) {
               <span>{torchOn ? '💡' : '🔦'}</span>
               <span>{torchOn ? 'Luz ON' : 'Luz'}</span>
             </button>
-            <span
+            {/* <span
               className={`text-xs px-2.5 py-1 rounded-full font-mono flex items-center gap-1.5 ${
                 cvReady ? 'bg-purple-900/60 text-purple-300 border border-purple-700/50' : 'bg-slate-800 text-slate-400'
               }`}
             >
               <span className={`w-2 h-2 rounded-full ${cvReady ? 'bg-purple-400 animate-ping' : 'bg-slate-500'}`} />
               {cvReady ? 'OpenCV activo' : 'Iniciando visión…'}
-            </span>
+            </span> */}
           </div>
         )}
       </div>
@@ -1190,9 +1191,6 @@ if (isDominantWinner && best) {
       <div className="max-w-md mx-auto">
         {!cameraOn ? (
           <div className="text-center py-10 bg-slate-900/60 border border-slate-800 rounded-2xl p-6">
-            <div className="w-16 h-16 bg-blue-600/20 text-blue-400 rounded-2xl flex items-center justify-center text-3xl mx-auto mb-4">
-              🃏
-            </div>
             <h2 className="text-white font-bold text-lg mb-2">Escáner con IA y Visión Computarizada</h2>
             <p className="text-slate-400 text-sm mb-6 max-w-xs mx-auto">
               Centra la carta entre las 4 esquinas del marco para escanear.
@@ -1239,23 +1237,26 @@ if (isDominantWinner && best) {
                   <h3 className="text-white font-bold text-lg mb-1">
                     {scanState === 'scanning' ? '¡Foto capturada!' : 'Buscando coincidencias…'}
                   </h3>
-                  <p className="text-blue-300 text-xs font-medium max-w-xs mb-2 animate-pulse">
+                  <p className="text-blue-300 text-xs font-medium max-w-xs mb-4 animate-pulse">
                     {scanState === 'scanning'
                       ? 'Analizando código y texto con IA…'
-                      : batchProgress || 'Comparando ilustración con OpenCV…'}
+                      : 'Comparando ilustración con OpenCV…'}
                   </p>
-                  <span className="text-[11px] text-slate-400">
-                    Cámara congelada mientras se procesa la carta
-                  </span>
+                  
+                  {scanState === 'matching' && (
+                    <button
+                      onClick={handleScanAgain}
+                      className="mt-2 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-5 py-2 rounded-lg text-sm transition-colors border border-slate-700"
+                    >
+                      Cancelar
+                    </button>
+                  )}
                 </div>
               )}
 
               {/* Cubierta de cámara cuando se completa el escaneo para detener detecciones y ahorrar peticiones */}
               {isCovered && (
                 <div className="absolute inset-0 bg-slate-950/85 backdrop-blur-md z-20 flex flex-col items-center justify-center p-6 text-center animate-fade-in">
-                  <div className="w-16 h-16 rounded-2xl bg-blue-600/20 border border-blue-500/30 text-blue-400 flex items-center justify-center text-3xl mb-3 shadow-lg">
-                    {cards.length > 0 ? (selectedCard ? '✅' : '🃏') : '⚠️'}
-                  </div>
                   <h3 className="text-white font-bold text-lg mb-1">
                     {cards.length > 0
                       ? selectedCard
@@ -1265,20 +1266,13 @@ if (isDominantWinner && best) {
                       ? 'No se identificó la carta'
                       : 'Escaneo Pausado'}
                   </h3>
-                  <p className="text-slate-300 text-xs max-w-xs mb-5">
+                  <p className="text-slate-300 text-xs max-w-xs">
                     {cards.length > 0
                       ? selectedCard
-                        ? 'Coincidencia visual confirmada. Cámara pausada para ahorrar peticiones.'
-                        : 'Revisa abajo las 5 opciones más cercanas.'
+                        ? 'Coincidencia visual confirmada. Cámara pausada.'
+                        : 'Revisa abajo las opciones más cercanas.'
                       : 'Asegúrate de que la carta esté bien iluminada y centrada entre las 4 esquinas.'}
                   </p>
-                  <button
-                    onClick={handleScanAgain}
-                    className="py-3 px-6 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-bold rounded-xl shadow-lg shadow-blue-600/30 flex items-center gap-2 transition-all transform active:scale-95"
-                  >
-                    <span>🔄</span>
-                    <span>Escanear otra carta</span>
-                  </button>
                 </div>
               )}
 
@@ -1420,18 +1414,14 @@ if (isDominantWinner && best) {
             {/* 3. SECCIÓN: OTROS TEXTOS LEÍDOS */}
             {candidates.filter((c) => c.query !== detectedQuery).length > 0 && (
               <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 mb-3">
-                <p className="text-slate-400 text-xs mb-2">Otros textos leídos (toca para reintentar con este):</p>
+                <p className="text-slate-400 text-xs mb-2">Otros textos leídos (toca para buscarlo):</p>
                 <div className="flex flex-wrap gap-1.5">
                   {candidates
                     .filter((c) => c.query !== detectedQuery)
                     .map((c, i) => (
                     <button
                       key={i}
-                      onClick={() => {
-                        if (capturedArtRef.current) {
-                          searchAndMatchVisual(c, capturedArtRef.current)
-                        }
-                      }}
+                      onClick={() => navigate('/search?q=' + encodeURIComponent(c.query))}
                       className="text-xs px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-slate-300 rounded-lg border border-slate-700 flex items-center gap-1.5 transition-colors"
                     >
                       {c.isCode ? (
@@ -1455,6 +1445,7 @@ if (isDominantWinner && best) {
             )}
 
             {/* 4. SECCIÓN: DIAGNÓSTICO DEBUG DEL ESCÁNER */}
+            {false && (
             <details className="bg-slate-900/90 border border-slate-800 rounded-2xl overflow-hidden shadow-lg mb-4">
               <summary className="p-3.5 text-xs font-bold text-slate-300 cursor-pointer flex items-center justify-between hover:bg-slate-800/50 transition-colors">
                 <span className="flex items-center gap-2">
@@ -1471,13 +1462,13 @@ if (isDominantWinner && best) {
                   {capturedArtData && (
                     <div className="bg-slate-950 p-2 rounded-xl border border-slate-800 text-center">
                       <p className="text-[11px] text-purple-400 font-mono mb-1 font-semibold">Foto recortada (OpenCV)</p>
-                      <img src={capturedArtData} alt="Recorte OpenCV" className="w-full h-36 object-contain rounded-lg bg-black" />
+                      <img src={capturedArtData || ''} alt="Recorte OpenCV" className="w-full h-36 object-contain rounded-lg bg-black" />
                     </div>
                   )}
                   {capturedTextData && (
                     <div className="bg-slate-950 p-2 rounded-xl border border-slate-800 text-center">
                       <p className="text-[11px] text-yellow-400 font-mono mb-1 font-semibold">Franja OCR (Contraste)</p>
-                      <img src={capturedTextData} alt="Recorte OCR" className="w-full h-36 object-contain rounded-lg bg-black" />
+                      <img src={capturedTextData || ''} alt="Recorte OCR" className="w-full h-36 object-contain rounded-lg bg-black" />
                     </div>
                   )}
                 </div>
@@ -1554,6 +1545,7 @@ if (isDominantWinner && best) {
                 )}
               </div>
             </details>
+            )}
           </>
         )}
       </div>
