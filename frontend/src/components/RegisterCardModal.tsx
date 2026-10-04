@@ -164,56 +164,57 @@ export default function RegisterCardModal({
   const displayImage = currentImage || capturedArtData
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
-      <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden my-6">
-        {/* Cabecera */}
-        <div className="flex items-center justify-between px-5 py-4 bg-slate-800/90 border-b border-slate-700">
-          <div className="flex items-center gap-2">
-            <span className="text-xl">✨</span>
-            <h2 className="text-lg font-bold text-white">Registrar Tarjeta Alterna / Custom</h2>
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/80 backdrop-blur-sm p-3 sm:p-4">
+      <div className="min-h-full flex items-start sm:items-center justify-center py-4 sm:py-8">
+        <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
+          {/* Cabecera */}
+          <div className="flex items-center justify-between px-5 py-4 bg-slate-800/90 border-b border-slate-700">
+            <div className="flex items-center gap-2">
+              <span className="text-xl">✨</span>
+              <h2 className="text-lg font-bold text-white">Registrar Tarjeta Alterna / Custom</h2>
+            </div>
+            <button
+              onClick={onClose}
+              className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-700 transition-colors"
+            >
+              ✕
+            </button>
           </div>
-          <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-700 transition-colors"
-          >
-            ✕
-          </button>
-        </div>
 
-        {/* Formulario */}
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          {error && (
-            <div className="p-3 bg-red-950/60 border border-red-800 rounded-xl text-xs text-red-300">
-              {error}
-            </div>
-          )}
+          {/* Formulario */}
+          <form onSubmit={handleSubmit} className="p-5 space-y-4">
+            {error && (
+              <div className="p-3 bg-red-950/60 border border-red-800 rounded-xl text-xs text-red-300">
+                {error}
+              </div>
+            )}
 
-          <div className="flex flex-col sm:flex-row gap-5 items-start">
-            {/* Foto tomada por el escáner (más grande y sin borde morado) */}
-            <div className="w-full sm:w-52 shrink-0 text-center">
-              <p className="text-[11px] font-semibold text-slate-400 mb-1.5">Foto de la Carta</p>
-              {displayImage ? (
-                <div className="relative inline-block w-full">
-                  <img
-                    src={displayImage}
-                    alt="Foto capturada"
-                    className="w-44 sm:w-full h-60 sm:h-76 object-contain rounded-lg mx-auto border border-slate-700 bg-black shadow-md"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowCropper(true)}
-                    className="mt-2.5 w-full py-2 px-3 bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 flex items-center justify-center gap-1.5 transition-colors shadow-sm"
-                  >
-                    <span>✂️</span>
-                    <span>Recortar imagen</span>
-                  </button>
-                </div>
-              ) : (
-                <div className="w-44 sm:w-full h-60 sm:h-76 bg-slate-800 rounded-lg mx-auto flex items-center justify-center text-3xl border border-slate-700">
-                  🃏
-                </div>
-              )}
-            </div>
+            <div className="flex flex-col sm:flex-row gap-5 items-start">
+              {/* Foto tomada por el escáner (30% más grande con botón de recorte flotante sobre la imagen) */}
+              <div className="w-full sm:w-64 shrink-0 text-center">
+                <p className="text-[11px] font-semibold text-slate-400 mb-2">Foto de la Carta</p>
+                {displayImage ? (
+                  <div className="relative inline-block mx-auto">
+                    <img
+                      src={displayImage}
+                      alt="Foto capturada"
+                      className="w-56 sm:w-64 h-76 sm:h-88 object-contain rounded-lg border border-slate-700 bg-black shadow-md block mx-auto"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowCropper(true)}
+                      title="Recortar y centrar imagen"
+                      className="absolute top-2.5 right-2.5 w-9 h-9 bg-slate-900/90 hover:bg-blue-600 active:bg-blue-700 text-white rounded-full shadow-lg border border-slate-600 backdrop-blur-sm transition-all hover:scale-110 active:scale-95 flex items-center justify-center"
+                    >
+                      <span className="text-base leading-none">✂️</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="w-56 sm:w-64 h-76 sm:h-88 bg-slate-800 rounded-lg mx-auto flex items-center justify-center text-4xl border border-slate-700">
+                    🃏
+                  </div>
+                )}
+              </div>
 
             {/* Campos principales */}
             <div className="flex-1 w-full space-y-3">
@@ -408,5 +409,6 @@ export default function RegisterCardModal({
         />
       </div>
     </div>
-  )
+  </div>
+)
 }
