@@ -106,3 +106,27 @@ export interface CardFilters {
   page?: number
   limit?: number
 }
+
+export interface CreateCustomCardPayload {
+  card_code?: string
+  name: string
+  set_id?: number
+  category?: string
+  rarity?: string
+  language?: 'en' | 'jp'
+  img_base64?: string
+  effect?: string
+  cost?: number | null
+  power?: number | null
+  descriptors?: string
+  rows_count?: number
+}
+
+export interface CreateCustomCardResponse {
+  success: boolean
+  card_code: string
+  category: string
+  is_don: boolean
+  error?: string
+}
+

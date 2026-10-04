@@ -4,6 +4,7 @@ import Webcam from 'react-webcam'
 import { api } from '../api'
 import type { Card } from '../types'
 import CardModal from '../components/CardModal'
+import RegisterCardModal from '../components/RegisterCardModal'
 import { proxyImg } from '../utils/proxyImg'
 import {
   loadOpenCV,
@@ -470,6 +471,7 @@ export default function ScannerPage() {
   const [selectedCard, setSelectedCard] = useState<string | null>(null)
   const [scannedLang, setScannedLang] = useState<'en' | 'jp'>('en')
   const [isDonResult, setIsDonResult] = useState(false)
+  const [showRegisterModal, setShowRegisterModal] = useState(false)
   const [batchProgress, setBatchProgress] = useState<string>('')
 
   // Datos para el panel de diagnóstico (Debug)
@@ -1499,6 +1501,23 @@ if (isDominantWinner && best) {
               </div>
             )}
 
+            {/* Opción para registrar carta manual/promo si se tiene foto de análisis */}
+            {capturedArtData && isCovered && (
+              <div className="bg-slate-900/90 border border-purple-800/40 rounded-xl p-3.5 mb-3 text-center shadow-lg">
+                <p className="text-xs text-slate-300 mb-2">
+                  ¿Es una carta promocional nueva o no registrada en el juego?
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowRegisterModal(true)}
+                  className="w-full py-2.5 px-4 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 active:from-purple-700 active:to-indigo-700 text-white font-bold text-xs rounded-xl shadow-md flex items-center justify-center gap-2 transition-all"
+                >
+                  <span>✨</span>
+                  <span>Registrar esta carta con su foto</span>
+                </button>
+              </div>
+            )}
+
             {/* 4. SECCIÓN: DIAGNÓSTICO DEBUG DEL ESCÁNER */}
             {false && (
             <details className="bg-slate-900/90 border border-slate-800 rounded-2xl overflow-hidden shadow-lg mb-4">
@@ -1610,6 +1629,16 @@ if (isDominantWinner && best) {
 
       {/* Modal directo de la carta encontrada */}
       {selectedCard && <CardModal cardCode={selectedCard} onClose={() => setSelectedCard(null)} initialLang={scannedLang} />}
+
+      {/* Modal para registrar carta nueva / alterna con su foto */}
+      <RegisterCardModal
+        isOpen={showRegisterModal}
+        onClose={() => setShowRegisterModal(false)}
+        capturedArtData={capturedArtData}
+        detectedCandidates={candidates}
+        initialLang={scannedLang}
+        isDonDetected={isDonResult}
+      />
     </div>
   )
 }

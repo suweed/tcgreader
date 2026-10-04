@@ -91,8 +91,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 // ----------------------------------------------------------------------------
 // 1. SETS
 // ----------------------------------------------------------------------------
+async function getNextCimCode(): Promise<string> {
+  const res = await query("SELECT card_code FROM cards WHERE card_code ILIKE 'CIM-%'")
+  let maxNum = 0
+  for (const row of res.rows) {
+    const match = String(row.card_code).match(/CIM-(\d+)/i)
+    if (match) {
+      const n = parseInt(match[1], 10)
+      if (!isNaN(n) && n > maxNum) maxNum = n
+    }
+  }
+  return `CIM-${String(maxNum + 1).padStart(3, '0')}`
+}
+
 async function handleSets(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Método no permitido' })
+
+  // Asegurar que el set 'Promociones Alternas' exista
+  try {
+    const checkSet = await query("SELECT id FROM sets WHERE code = 'PROMO-ALT' OR raw_title ILIKE 'Promociones Alternas%' LIMIT 1")
+    if (checkSet.rows.length === 0) {
+      await query("INSERT INTO sets (code, raw_title) VALUES ('PROMO-ALT', 'Promociones Alternas')")
+    }
+  } catch {}
 
   const lang = String(req.query.lang || '').toLowerCase().trim()
   let langJoin = ''
@@ -110,8 +131,8 @@ async function handleSets(req: VercelRequest, res: VercelResponse) {
     LEFT JOIN cards c ON c.set_id = s.id
     ${langJoin}
     GROUP BY s.id
-    HAVING COUNT(DISTINCT c.card_code) > 0
-    ORDER BY s.code ASC
+    HAVING COUNT(DISTINCT c.card_code) > 0 OR s.code = 'PROMO-ALT'
+    ORDER BY CASE WHEN s.code = 'PROMO-ALT' THEN 0 ELSE 1 END, s.code ASC
   `
   const result = await query(sql)
   return res.status(200).json(result.rows)
@@ -121,6 +142,111 @@ async function handleSets(req: VercelRequest, res: VercelResponse) {
 // 2. CARDS
 // ----------------------------------------------------------------------------
 async function handleCards(req: VercelRequest, res: VercelResponse, segments: string[]) {
+  // Endpoint para obtener el siguiente código consecutivo CIM-XXX
+  if (req.method === 'GET' && segments[1] === 'next-cim-code') {
+    const nextCode = await getNextCimCode()
+    return res.status(200).json({ next_code: nextCode })
+  }
+
+  // POST /cards -> Registro manual / personalizado de tarjeta
+  if (req.method === 'POST') {
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {}
+    const name = String(body.name || '').trim()
+    if (!name) {
+      return res.status(400).json({ error: 'El nombre de la carta es obligatorio' })
+    }
+
+    let cardCode = String(body.card_code || '').trim()
+    if (!cardCode) {
+      cardCode = await getNextCimCode()
+    } else {
+      cardCode = normalizeCardCode(cardCode)
+    }
+
+    const category = String(body.category || 'Character').trim()
+    const rarity = String(body.rarity || (category === 'DON!!' ? 'DON!!' : 'P')).trim()
+    const language = body.language === 'jp' ? 'jp' : 'en'
+    const effect = body.effect ? String(body.effect).trim() : null
+    const imgUrl = body.img_url || body.img_base64 || null
+    const cost = body.cost !== undefined && body.cost !== null && body.cost !== '' ? Number(body.cost) : null
+    const power = body.power !== undefined && body.power !== null && body.power !== '' ? Number(body.power) : null
+
+    // Obtener o crear set Promociones Alternas si no se especificó otro
+    let setId: number
+    if (body.set_id && Number(body.set_id) > 0) {
+      setId = Number(body.set_id)
+    } else {
+      let promoAlt = await query("SELECT id FROM sets WHERE code = 'PROMO-ALT' OR raw_title ILIKE 'Promociones Alternas%' LIMIT 1")
+      if (promoAlt.rows.length === 0) {
+        await query("INSERT INTO sets (code, raw_title) VALUES ('PROMO-ALT', 'Promociones Alternas')")
+        promoAlt = await query("SELECT id FROM sets WHERE code = 'PROMO-ALT' LIMIT 1")
+      }
+      setId = Number(promoAlt.rows[0].id)
+    }
+
+    // 1. Insertar / Actualizar en cards
+    await query(
+      `
+      INSERT INTO cards (card_code, set_id, category, colors, cost, power, rarity, attributes, types)
+      VALUES ($1, $2, $3, '[]'::jsonb, $4, $5, $6, '[]'::jsonb, '[]'::jsonb)
+      ON CONFLICT (card_code) DO UPDATE SET
+        set_id = EXCLUDED.set_id,
+        category = EXCLUDED.category,
+        rarity = EXCLUDED.rarity,
+        cost = EXCLUDED.cost,
+        power = EXCLUDED.power
+    `,
+      [cardCode, setId, category, cost, power, rarity]
+    )
+
+    // 2. Insertar / Actualizar en card_locales
+    await query(
+      `
+      INSERT INTO card_locales (card_code, language, name, effect, img_url)
+      VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT (card_code, language) DO UPDATE SET
+        name = EXCLUDED.name,
+        effect = EXCLUDED.effect,
+        img_url = COALESCE(EXCLUDED.img_url, card_locales.img_url)
+    `,
+      [cardCode, language, name, effect, imgUrl]
+    )
+
+    // 3. Insertar / Actualizar en collection (para que forme parte de mi colección de inmediato)
+    await query(
+      `
+      INSERT INTO collection (card_code, language, quantity, condition, added_at)
+      VALUES ($1, $2, 1, 'near_mint', EXTRACT(EPOCH FROM NOW())::BIGINT)
+      ON CONFLICT (card_code, language) DO UPDATE SET
+        quantity = collection.quantity + 1
+    `,
+      [cardCode, language]
+    )
+
+    // 4. Si vienen descriptores visuales OpenCV, guardarlos en card_visual_cache
+    if (body.descriptors) {
+      const rowsCount = Number(body.rows_count || 500)
+      await query(
+        `
+        INSERT INTO card_visual_cache (card_code, language, orb_descriptors, rows_count, updated_at)
+        VALUES ($1, $2, $3, $4, EXTRACT(EPOCH FROM NOW())::BIGINT)
+        ON CONFLICT (card_code, language) DO UPDATE SET
+          orb_descriptors = EXCLUDED.orb_descriptors,
+          rows_count = EXCLUDED.rows_count,
+          updated_at = EXCLUDED.updated_at
+      `,
+        [cardCode, language, body.descriptors, rowsCount]
+      )
+    }
+
+    return res.status(201).json({
+      success: true,
+      card_code: cardCode,
+      category,
+      is_don: category === 'DON!!',
+    })
+  }
+
   if (req.method !== 'GET') return res.status(405).json({ error: 'Método no permitido' })
 
   if (segments[1]) {
