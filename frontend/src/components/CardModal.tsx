@@ -431,7 +431,8 @@ export default function CardModal({ cardCode, onClose, onCollectionChange, initi
         onClose={() => setEditModalOpen(false)}
         initialCard={card}
         initialLang={lang}
-        onCardUpdated={() => {
+        onCardUpdated={(newLang) => {
+          if (newLang) setLang(newLang)
           api.getCard(cardCode).then((c) => setCard(c))
           onCollectionChange?.()
         }}

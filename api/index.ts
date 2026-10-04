@@ -166,7 +166,9 @@ async function handleCards(req: VercelRequest, res: VercelResponse, segments: st
     const category = String(body.category || 'Character').trim()
     const rarity = String(body.rarity || (category === 'DON!!' ? 'DON!!' : 'P')).trim()
     const language = body.language === 'jp' ? 'jp' : 'en'
-    const effect = body.effect ? String(body.effect).trim() : null
+    const prevLanguage = body.prev_language === 'jp' ? 'jp' : body.prev_language === 'en' ? 'en' : language
+    const isEdit = Boolean(body.is_edit)
+    const effect = body.effect !== undefined && body.effect !== null ? String(body.effect).trim() : null
     const imgUrl = body.img_url || body.img_base64 || null
     const cost = body.cost !== undefined && body.cost !== null && body.cost !== '' ? Number(body.cost) : null
     const power = body.power !== undefined && body.power !== null && body.power !== '' ? Number(body.power) : null
@@ -199,6 +201,29 @@ async function handleCards(req: VercelRequest, res: VercelResponse, segments: st
       [cardCode, setId, category, cost, power, rarity]
     )
 
+    // Si es edición y el idioma cambió (ej. de 'en' a 'jp'), migramos los datos anteriores
+    if (isEdit && prevLanguage !== language) {
+      await query('DELETE FROM card_locales WHERE card_code = $1 AND language = $2', [cardCode, language])
+      await query(
+        `UPDATE card_locales
+         SET language = $1, name = $2, effect = $3, img_url = COALESCE($4, img_url)
+         WHERE card_code = $5 AND language = $6`,
+        [language, name, effect, imgUrl, cardCode, prevLanguage]
+      )
+
+      await query('DELETE FROM collection WHERE card_code = $1 AND language = $2', [cardCode, language])
+      await query(
+        'UPDATE collection SET language = $1 WHERE card_code = $2 AND language = $3',
+        [language, cardCode, prevLanguage]
+      )
+
+      await query('DELETE FROM card_visual_cache WHERE card_code = $1 AND language = $2', [cardCode, language])
+      await query(
+        'UPDATE card_visual_cache SET language = $1 WHERE card_code = $2 AND language = $3',
+        [language, cardCode, prevLanguage]
+      )
+    }
+
     // 2. Insertar / Actualizar en card_locales
     await query(
       `
@@ -213,7 +238,6 @@ async function handleCards(req: VercelRequest, res: VercelResponse, segments: st
     )
 
     // 3. Insertar / Actualizar en collection
-    const isEdit = Boolean(body.is_edit)
     const onConflictCollection = isEdit
       ? 'ON CONFLICT (card_code, language) DO NOTHING'
       : 'ON CONFLICT (card_code, language) DO UPDATE SET quantity = collection.quantity + 1'

@@ -5,6 +5,73 @@ import type { Set, Card } from '../types'
 import { extractImageDescriptors } from '../utils/cardVision'
 import ImageCropperModal from './ImageCropperModal'
 
+export const RARITY_OPTIONS = [
+  { value: 'Promo', label: 'P (Promocional)' },
+  { value: 'DON!!', label: 'DON!!' },
+  { value: 'Common', label: 'C (Común)' },
+  { value: 'Uncommon', label: 'UC (Infrecuente)' },
+  { value: 'Rare', label: 'R (Rara)' },
+  { value: 'SuperRare', label: 'SR (Súper Rara)' },
+  { value: 'SecretRare', label: 'SEC (Secreta)' },
+  { value: 'Leader', label: 'L (Líder)' },
+  { value: 'Special', label: 'SP (Especial)' },
+  { value: 'Custom', label: 'Custom' },
+]
+
+export const CATEGORY_OPTIONS = [
+  { value: 'Character', label: 'Character (Personaje)' },
+  { value: 'Leader', label: 'Leader (Líder)' },
+  { value: 'Event', label: 'Event (Evento)' },
+  { value: 'Stage', label: 'Stage (Escenario)' },
+  { value: 'DON!!', label: 'DON!!' },
+]
+
+function normalizeRarity(val?: string | null): string {
+  if (!val) return 'Promo'
+  const v = val.trim()
+  const map: Record<string, string> = {
+    P: 'Promo',
+    PROMO: 'Promo',
+    C: 'Common',
+    COMMON: 'Common',
+    UC: 'Uncommon',
+    UNCOMMON: 'Uncommon',
+    R: 'Rare',
+    RARE: 'Rare',
+    SR: 'SuperRare',
+    SUPERRARE: 'SuperRare',
+    'SUPER RARE': 'SuperRare',
+    SEC: 'SecretRare',
+    SECRETRARE: 'SecretRare',
+    'SECRET RARE': 'SecretRare',
+    L: 'Leader',
+    LEADER: 'Leader',
+    SP: 'Special',
+    SPECIAL: 'Special',
+    'DON!!': 'DON!!',
+    DON: 'DON!!',
+    CUSTOM: 'Custom',
+    Custom: 'Custom',
+  }
+  return map[v.toUpperCase()] || v
+}
+
+function normalizeCategory(val?: string | null): string {
+  if (!val) return 'Character'
+  const v = val.trim()
+  const map: Record<string, string> = {
+    CHARACTER: 'Character',
+    LEADER: 'Leader',
+    EVENT: 'Event',
+    STAGE: 'Stage',
+    'DON!!': 'DON!!',
+    DON: 'DON!!',
+  }
+  return map[v.toUpperCase()] || v
+}
+
+const EMPTY_CANDIDATES: Array<{ query: string; isCode: boolean }> = []
+
 interface Props {
   isOpen: boolean
   onClose: () => void
@@ -13,14 +80,14 @@ interface Props {
   initialLang?: 'en' | 'jp'
   isDonDetected?: boolean
   initialCard?: Card | null
-  onCardUpdated?: () => void
+  onCardUpdated?: (newLang?: 'en' | 'jp') => void
 }
 
 export default function RegisterCardModal({
   isOpen,
   onClose,
   capturedArtData = null,
-  detectedCandidates = [],
+  detectedCandidates = EMPTY_CANDIDATES,
   initialLang = 'en',
   isDonDetected = false,
   initialCard = null,
@@ -38,55 +105,75 @@ export default function RegisterCardModal({
   const [name, setName] = useState('')
   const [setId, setSetId] = useState<number>(0)
   const [category, setCategory] = useState(isDonDetected ? 'DON!!' : 'Character')
-  const [rarity, setRarity] = useState(isDonDetected ? 'DON!!' : 'P')
+  const [rarity, setRarity] = useState(isDonDetected ? 'DON!!' : 'Promo')
   const [language, setLanguage] = useState<'en' | 'jp'>(initialLang)
   const [effect, setEffect] = useState('')
   const [sets, setSets] = useState<Set[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  // Cargar datos al abrir (modo edición o modo creación)
+  // Controladores de ciclo de vida del modal para no sobreescribir los cambios del usuario
+  const hasInitializedRef = useRef(false)
+  const userChangedSetRef = useRef(false)
+  const prevLangRef = useRef<'en' | 'jp'>(initialLang)
+
+  // Cargar sets disponibles una sola vez
   useEffect(() => {
-    if (!isOpen) return
-
-    setError('')
-
-    // Cargar sets disponibles
     api.getSets().then((loadedSets) => {
       setSets(loadedSets)
-      if (initialCard) {
-        const found = loadedSets.find((s) => s.code === initialCard.set_code || s.raw_title === initialCard.set_name)
-        if (found) setSetId(found.id)
-      } else {
-        const promoAlt = loadedSets.find((s) => s.code === 'PROMO-ALT' || s.raw_title.toLowerCase().includes('promociones alternas'))
-        if (promoAlt) {
-          setSetId(promoAlt.id)
-        } else if (loadedSets.length > 0) {
-          setSetId(loadedSets[0].id)
+      if (!userChangedSetRef.current) {
+        if (initialCard) {
+          const found = loadedSets.find((s) => s.code === initialCard.set_code || s.raw_title === initialCard.set_name)
+          if (found) setSetId(found.id)
+        } else {
+          const promoAlt = loadedSets.find((s) => s.code === 'PROMO-ALT' || s.raw_title.toLowerCase().includes('promociones alternas'))
+          if (promoAlt) {
+            setSetId(promoAlt.id)
+          } else if (loadedSets.length > 0) {
+            setSetId(loadedSets[0].id)
+          }
         }
       }
     }).catch(() => {})
+  }, [initialCard])
+
+  // Inicializar los datos del formulario SOLO al abrir el modal (una sola vez por apertura)
+  useEffect(() => {
+    if (!isOpen) {
+      hasInitializedRef.current = false
+      userChangedSetRef.current = false
+      return
+    }
+
+    if (hasInitializedRef.current) return
+    hasInitializedRef.current = true
+
+    setError('')
 
     if (initialCard) {
       // Modo Edición
-      const currentLoc = initialCard.locales[initialLang || 'en'] ?? initialCard.locales.en ?? initialCard.locales.jp
+      const cardLang = (initialCard.locales[initialLang || 'en'] ? (initialLang || 'en') : (initialCard.locales.en ? 'en' : 'jp')) as 'en' | 'jp'
+      prevLangRef.current = cardLang
+      const currentLoc = initialCard.locales[cardLang] ?? initialCard.locales.en ?? initialCard.locales.jp
+
       setCardCode(initialCard.card_code)
       setName(currentLoc?.name || '')
-      setCategory(initialCard.category || 'Character')
-      setRarity(initialCard.rarity || 'P')
-      setLanguage(initialLang || 'en')
+      setCategory(normalizeCategory(initialCard.category))
+      setRarity(normalizeRarity(initialCard.rarity))
+      setLanguage(cardLang)
       setEffect(currentLoc?.effect || '')
       setCurrentImage(currentLoc?.img_url || capturedArtData || null)
     } else {
       // Modo Creación nueva
+      prevLangRef.current = initialLang
       setCurrentImage(capturedArtData)
       setCategory(isDonDetected ? 'DON!!' : 'Character')
-      setRarity(isDonDetected ? 'DON!!' : 'P')
+      setRarity(isDonDetected ? 'DON!!' : 'Promo')
       setLanguage(initialLang)
 
       api.getNextCimCode().then((res) => {
         setAutoCode(res.next_code)
-        const codeCandidate = detectedCandidates.find((c) => c.isCode)
+        const codeCandidate = (detectedCandidates || []).find((c) => c.isCode)
         if (codeCandidate) {
           setCardCode(codeCandidate.query)
         } else {
@@ -97,7 +184,7 @@ export default function RegisterCardModal({
         setCardCode('CIM-001')
       })
 
-      const nameCandidate = detectedCandidates.find((c) => !c.isCode && !/^(DON|YOUR TURN)/i.test(c.query))
+      const nameCandidate = (detectedCandidates || []).find((c) => !c.isCode && !/^(DON|YOUR TURN)/i.test(c.query))
       if (nameCandidate) {
         setName(nameCandidate.query)
       } else if (isDonDetected) {
@@ -106,7 +193,7 @@ export default function RegisterCardModal({
         setName('')
       }
     }
-  }, [isOpen, initialCard, capturedArtData, detectedCandidates, initialLang, isDonDetected])
+  }, [isOpen, initialCard, capturedArtData, initialLang, isDonDetected, detectedCandidates])
 
   if (!isOpen) return null
 
@@ -115,7 +202,7 @@ export default function RegisterCardModal({
     if (newCat === 'DON!!') {
       setRarity('DON!!')
     } else if (rarity === 'DON!!') {
-      setRarity('P')
+      setRarity('Promo')
     }
   }
 
@@ -176,6 +263,7 @@ export default function RegisterCardModal({
         category,
         rarity,
         language,
+        prev_language: prevLangRef.current,
         effect: effect.trim() || undefined,
         img_base64: finalImage || undefined,
         descriptors,
@@ -186,7 +274,7 @@ export default function RegisterCardModal({
       if (res.success) {
         onClose()
         if (isEditMode) {
-          onCardUpdated?.()
+          onCardUpdated?.(language)
         } else if (res.is_don) {
           navigate(`/don?card=${encodeURIComponent(res.card_code)}`)
         } else {
@@ -357,10 +445,19 @@ export default function RegisterCardModal({
                   </label>
                   <select
                     value={setId}
-                    onChange={(e) => setSetId(Number(e.target.value))}
+                    onChange={(e) => {
+                      userChangedSetRef.current = true
+                      setSetId(Number(e.target.value))
+                    }}
                     className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 focus:outline-none"
                   >
                     <option value={0}>Promociones Alternas (Predeterminado)</option>
+                    {/* Opción fallback si setId no está en la lista inicial */}
+                    {setId > 0 && !sets.some((s) => s.id === setId) && (
+                      <option value={setId}>
+                        {initialCard?.set_name ? `${initialCard.set_code || ''} - ${initialCard.set_name}` : `Set #${setId}`}
+                      </option>
+                    )}
                     {sets.map((s) => (
                       <option key={s.id} value={s.id}>
                         {s.code} - {s.raw_title}
@@ -383,11 +480,15 @@ export default function RegisterCardModal({
                   onChange={(e) => handleCategoryChange(e.target.value)}
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 focus:outline-none"
                 >
-                  <option value="Character">Character (Personaje)</option>
-                  <option value="Leader">Leader (Líder)</option>
-                  <option value="Event">Event (Evento)</option>
-                  <option value="Stage">Stage (Escenario)</option>
-                  <option value="DON!!">DON!!</option>
+                  {/* Opción fallback por si viene una categoría no listada */}
+                  {category && !CATEGORY_OPTIONS.some((o) => o.value === category) && (
+                    <option value={category}>{category}</option>
+                  )}
+                  {CATEGORY_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -401,16 +502,15 @@ export default function RegisterCardModal({
                   onChange={(e) => setRarity(e.target.value)}
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 focus:outline-none"
                 >
-                  <option value="P">P (Promocional)</option>
-                  <option value="DON!!">DON!!</option>
-                  <option value="C">C (Común)</option>
-                  <option value="UC">UC (Infrecuente)</option>
-                  <option value="R">R (Rara)</option>
-                  <option value="SR">SR (Súper Rara)</option>
-                  <option value="SEC">SEC (Secreta)</option>
-                  <option value="L">L (Líder)</option>
-                  <option value="SP">SP (Especial)</option>
-                  <option value="Custom">Custom</option>
+                  {/* Opción fallback por si viene una rareza no listada */}
+                  {rarity && !RARITY_OPTIONS.some((o) => o.value === rarity) && (
+                    <option value={rarity}>{rarity}</option>
+                  )}
+                  {RARITY_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
                 </select>
               </div>
 

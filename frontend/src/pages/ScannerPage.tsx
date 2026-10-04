@@ -473,6 +473,11 @@ export default function ScannerPage() {
   const [isDonResult, setIsDonResult] = useState(false)
   const [showRegisterModal, setShowRegisterModal] = useState(false)
   const [batchProgress, setBatchProgress] = useState<string>('')
+  const modalOpenRef = useRef(false)
+
+  useEffect(() => {
+    modalOpenRef.current = Boolean(selectedCard || showRegisterModal)
+  }, [selectedCard, showRegisterModal])
 
   // Datos para el panel de diagnóstico (Debug)
   const [capturedArtData, setCapturedArtData] = useState<string | null>(null)
@@ -1082,6 +1087,10 @@ if (isDominantWinner && best) {
 
     const tick = () => {
       if (!loopActiveRef.current) return
+      if (modalOpenRef.current) {
+        rafRef.current = requestAnimationFrame(tick)
+        return
+      }
       if (!isScanningRef.current) {
         const result = analyzeFrame()
         if (result) {

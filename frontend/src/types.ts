@@ -121,6 +121,7 @@ export interface CreateCustomCardPayload {
   descriptors?: string
   rows_count?: number
   is_edit?: boolean
+  prev_language?: 'en' | 'jp'
 }
 
 export interface CreateCustomCardResponse {
