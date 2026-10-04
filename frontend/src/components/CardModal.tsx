@@ -9,10 +9,11 @@ interface Props {
   cardCode: string
   onClose: () => void
   onCollectionChange?: () => void
+  onCardAdded?: (card: Card, language: 'en' | 'jp') => void
   initialLang?: 'en' | 'jp'
 }
 
-export default function CardModal({ cardCode, onClose, onCollectionChange, initialLang }: Props) {
+export default function CardModal({ cardCode, onClose, onCollectionChange, onCardAdded, initialLang }: Props) {
   const [card, setCard] = useState<Card | null>(null)
   const [price, setPrice] = useState<PriceResult | null>(null)
   const [lang, setLang] = useState<'en' | 'jp'>(initialLang || 'en')
@@ -59,6 +60,7 @@ export default function CardModal({ cardCode, onClose, onCollectionChange, initi
     try {
       await api.addToCollection(card.card_code, language)
       onCollectionChange?.()
+      onCardAdded?.(card, language)
       onClose()
     } finally {
       setAdding(null)

@@ -970,13 +970,7 @@ export default function ScannerPage() {
         })
         setDebugMatches(debugList)
 
-if (isDominantWinner && best) {
-          if (isDonScan) {
-            loopActiveRef.current = false
-            stopCameraTracks()
-            navigate(`/don?card=${encodeURIComponent(best.card_code)}`)
-            return
-          }
+        if (isDominantWinner && best) {
           setSelectedCard(best.card_code)
         } else {
           setSelectedCard(null)
@@ -1431,11 +1425,7 @@ if (isDominantWinner && best) {
                     return (
                       <button
                         key={card.card_code}
-                        onClick={() =>
-                          isDonResult
-                            ? navigate(`/don?card=${encodeURIComponent(card.card_code)}`)
-                            : setSelectedCard(card.card_code)
-                        }
+                        onClick={() => setSelectedCard(card.card_code)}
                         className={`relative rounded-xl p-2 text-left transition-all ${
                           isTop
                             ? 'bg-slate-800 ring-2 ring-purple-500 shadow-lg shadow-purple-900/30 hover:bg-slate-700'
@@ -1637,7 +1627,20 @@ if (isDominantWinner && best) {
       <canvas ref={analysisRef} className="hidden" aria-hidden="true" />
 
       {/* Modal directo de la carta encontrada */}
-      {selectedCard && <CardModal cardCode={selectedCard} onClose={() => setSelectedCard(null)} initialLang={scannedLang} />}
+      {selectedCard && (
+        <CardModal
+          cardCode={selectedCard}
+          onClose={() => setSelectedCard(null)}
+          initialLang={scannedLang}
+          onCardAdded={(addedCard) => {
+            if (addedCard.category === 'DON!!') {
+              navigate(`/don?card=${encodeURIComponent(addedCard.card_code)}`)
+            } else {
+              navigate('/collection')
+            }
+          }}
+        />
+      )}
 
       {/* Modal para registrar carta nueva / alterna con su foto */}
       <RegisterCardModal
