@@ -216,8 +216,8 @@ async function handleCards(req: VercelRequest, res: VercelResponse, segments: st
   let paramIdx = 1
 
   if (q) {
-    // Reemplaza espacios, comillas, y ampersands por '%' para ignorar la puntuación exacta o diferencias como '&amp;' vs '&'.
-    const fuzzyQ = '%' + q.replace(/[\s"&]+/g, '%') + '%'
+    // Reemplaza espacios, comillas, ampersands y el punto medio japonés (・) por '%'
+    const fuzzyQ = '%' + q.replace(/[\s"&・]+/g, '%') + '%'
     where.push(`(c.card_code ILIKE $${paramIdx} OR en_loc.name ILIKE $${paramIdx} OR jp_loc.name ILIKE $${paramIdx})`)
     params.push(fuzzyQ)
     paramIdx++

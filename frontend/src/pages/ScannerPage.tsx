@@ -176,7 +176,8 @@ function parseOcrText(raw: string): { candidates: { query: string; isCode: boole
   const seen = new Set<string>()
 
   const add = (q: string, isCode: boolean) => {
-    const k = q.toLowerCase().replace(/[^a-z0-9]/g, '')
+    // Usamos \p{L} para soportar caracteres japoneses al generar la llave de deduplicación
+    const k = q.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
     if (k.length >= 2 && !seen.has(k)) {
       seen.add(k)
       result.push({ query: q, isCode })
