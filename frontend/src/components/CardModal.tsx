@@ -8,12 +8,13 @@ interface Props {
   cardCode: string
   onClose: () => void
   onCollectionChange?: () => void
+  initialLang?: 'en' | 'jp'
 }
 
-export default function CardModal({ cardCode, onClose, onCollectionChange }: Props) {
+export default function CardModal({ cardCode, onClose, onCollectionChange, initialLang }: Props) {
   const [card, setCard] = useState<Card | null>(null)
   const [price, setPrice] = useState<PriceResult | null>(null)
-  const [lang, setLang] = useState<'en' | 'jp'>('en')
+  const [lang, setLang] = useState<'en' | 'jp'>(initialLang || 'en')
   const [loading, setLoading] = useState(true)
   const [adding, setAdding] = useState<'en' | 'jp' | null>(null)
   const { usdToMxn } = useSettings()

@@ -87,6 +87,7 @@ export default function CardItem({ card, lang, onCollectionChange }: Props) {
           cardCode={card.card_code}
           onClose={() => setShowModal(false)}
           onCollectionChange={onCollectionChange}
+          initialLang={(lang === 'jp' ? 'jp' : lang === 'en' ? 'en' : (card.locales.en ? 'en' : 'jp'))}
         />
       )}
     </>
