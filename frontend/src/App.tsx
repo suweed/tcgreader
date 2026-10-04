@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Routes, Route, NavLink } from 'react-router-dom'
 import AlbumPage from './pages/AlbumPage'
 import CollectionPage from './pages/CollectionPage'
-import SearchPage from './pages/SearchPage'
+import DonPage from './pages/DonPage'
 import ScannerPage from './pages/ScannerPage'
 import SettingsPanel from './components/SettingsPanel'
 import { SettingsProvider } from './context/SettingsContext'
@@ -34,7 +34,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<AlbumPage />} />
             <Route path="/collection" element={<CollectionPage />} />
-            <Route path="/search" element={<SearchPage />} />
+            <Route path="/don" element={<DonPage />} />
             <Route path="/scanner" element={<ScannerPage />} />
           </Routes>
         </main>
@@ -49,9 +49,9 @@ export default function App() {
             <span className="no-invert">🗂</span>
             <span>Colección</span>
           </NavLink>
-          <NavLink to="/search" className={navClass}>
-            <span className="no-invert">🔍</span>
-            <span>Buscar</span>
+          <NavLink to="/don" className={navClass}>
+            <span className="no-invert">🃏</span>
+            <span>DON!!</span>
           </NavLink>
           <NavLink to="/scanner" className={navClass}>
             <span className="no-invert">📷</span>

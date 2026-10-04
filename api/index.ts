@@ -240,6 +240,8 @@ async function handleCards(req: VercelRequest, res: VercelResponse, segments: st
     where.push(`c.category = $${paramIdx}`)
     params.push(category)
     paramIdx++
+  } else {
+    where.push(`c.category != 'DON!!'`)
   }
   if (rarity) {
     where.push(`c.rarity = $${paramIdx}`)
@@ -386,17 +388,19 @@ async function handleCollection(req: VercelRequest, res: VercelResponse, segment
 
   if (sub === 'stats') {
     if (req.method !== 'GET') return res.status(405).json({ error: 'Método no permitido' })
+    const isDon = req.query.isDon === 'true'
+    const op = isDon ? '=' : '!='
     const statsRes = await query(`
       SELECT
-        (SELECT COUNT(DISTINCT card_code)::int FROM collection) AS total_owned,
-        (SELECT COUNT(*)::int FROM cards) AS total_cards,
-        (SELECT COUNT(*)::int FROM sets) AS total_sets,
-        (SELECT COUNT(*)::int FROM collection WHERE language = 'en') AS cards_with_en,
-        (SELECT COUNT(*)::int FROM collection WHERE language = 'jp') AS cards_with_jp,
-        (SELECT ROUND(SUM(price_usd * quantity), 2)::float FROM collection WHERE price_usd IS NOT NULL) AS total_value_usd,
-        (SELECT COUNT(*)::int FROM collection WHERE price_usd IS NOT NULL) AS priced_cards,
-        (SELECT COUNT(DISTINCT card_code)::int FROM card_locales WHERE language = 'en') AS total_en,
-        (SELECT COUNT(DISTINCT card_code)::int FROM card_locales WHERE language = 'jp') AS total_jp
+        (SELECT COUNT(DISTINCT col.card_code)::int FROM collection col JOIN cards c ON c.card_code = col.card_code WHERE c.category ${op} 'DON!!') AS total_owned,
+        (SELECT COUNT(*)::int FROM cards WHERE category ${op} 'DON!!') AS total_cards,
+        (SELECT COUNT(DISTINCT c.set_id)::int FROM cards c WHERE category ${op} 'DON!!') AS total_sets,
+        (SELECT COUNT(*)::int FROM collection col JOIN cards c ON c.card_code = col.card_code WHERE col.language = 'en' AND c.category ${op} 'DON!!') AS cards_with_en,
+        (SELECT COUNT(*)::int FROM collection col JOIN cards c ON c.card_code = col.card_code WHERE col.language = 'jp' AND c.category ${op} 'DON!!') AS cards_with_jp,
+        (SELECT ROUND(SUM(col.price_usd * col.quantity), 2)::float FROM collection col JOIN cards c ON c.card_code = col.card_code WHERE col.price_usd IS NOT NULL AND c.category ${op} 'DON!!') AS total_value_usd,
+        (SELECT COUNT(*)::int FROM collection col JOIN cards c ON c.card_code = col.card_code WHERE col.price_usd IS NOT NULL AND c.category ${op} 'DON!!') AS priced_cards,
+        (SELECT COUNT(DISTINCT l.card_code)::int FROM card_locales l JOIN cards c ON c.card_code = l.card_code WHERE l.language = 'en' AND c.category ${op} 'DON!!') AS total_en,
+        (SELECT COUNT(DISTINCT l.card_code)::int FROM card_locales l JOIN cards c ON c.card_code = l.card_code WHERE l.language = 'jp' AND c.category ${op} 'DON!!') AS total_jp
     `)
     return res.status(200).json(statsRes.rows[0])
   }
@@ -744,7 +748,7 @@ async function fetchAndCachePrice(cardCode: string): Promise<number | null> {
 // ----------------------------------------------------------------------------
 // 5. IMAGE PROXY
 // ----------------------------------------------------------------------------
-const ALLOWED_IMAGE_HOSTS = ['www.onepiece-cardgame.com', 'en.onepiece-cardgame.com', 'optcgapi.com']
+const ALLOWED_IMAGE_HOSTS = ['www.onepiece-cardgame.com', 'en.onepiece-cardgame.com', 'optcgapi.com', 'www.optcgapi.com']
 
 async function handleImg(req: VercelRequest, res: VercelResponse, url: URL) {
   const targetUrl = url.searchParams.get('u')
@@ -762,9 +766,10 @@ async function handleImg(req: VercelRequest, res: VercelResponse, url: URL) {
   }
 
   try {
+    const isBandai = parsed.hostname.includes('onepiece-cardgame.com')
     const imgRes = await fetch(parsed.toString(), {
       headers: {
-        Referer: 'https://www.onepiece-cardgame.com/',
+        ...(isBandai ? { Referer: 'https://www.onepiece-cardgame.com/' } : {}),
         'User-Agent': 'Mozilla/5.0 (compatible; TCGTracker/1.0)',
       },
     })

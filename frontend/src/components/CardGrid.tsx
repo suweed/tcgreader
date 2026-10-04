@@ -8,9 +8,10 @@ interface Props {
   showOwnedToggle?: boolean
   collectionMode?: boolean
   initialQ?: string
+  forceCategory?: string
 }
 
-export default function CardGrid({ initialFilters = {}, showOwnedToggle = true, collectionMode = false, initialQ }: Props) {
+export default function CardGrid({ initialFilters = {}, showOwnedToggle = true, collectionMode = false, initialQ, forceCategory }: Props) {
   const [cards, setCards] = useState<Card[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -31,7 +32,8 @@ export default function CardGrid({ initialFilters = {}, showOwnedToggle = true, 
   const loadCards = useCallback(async (f: CardFilters) => {
     setLoading(true)
     try {
-      const res = await api.getCards(f)
+      const finalFilters = forceCategory ? { ...f, category: forceCategory } : f
+      const res = await api.getCards(finalFilters)
       setCards(res.data)
       setTotal(res.total)
       setPages(res.pages)
@@ -243,15 +245,17 @@ export default function CardGrid({ initialFilters = {}, showOwnedToggle = true, 
 
           {/* Advanced filters */}
           <div className="flex flex-wrap gap-4">
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-slate-400">Categoría</label>
-              <select onChange={(e) => handleFilter('category', e.target.value)} className={selectClass}>
-                <option value="">Todas</option>
-                {['Character', 'Event', 'Stage', 'Leader', 'DON!!'].map((cat) => (
-                  <option key={cat}>{cat}</option>
-                ))}
-              </select>
-            </div>
+            {!forceCategory && (
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-400">Categoría</label>
+                <select onChange={(e) => handleFilter('category', e.target.value)} className={selectClass}>
+                  <option value="">Todas</option>
+                  {['Character', 'Event', 'Stage', 'Leader'].map((cat) => (
+                    <option key={cat}>{cat}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div className="flex flex-col gap-1">
               <label className="text-xs text-slate-400">Coste</label>

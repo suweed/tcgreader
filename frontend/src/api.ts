@@ -24,7 +24,7 @@ export const api = {
 
   getCard: (code: string) => apiFetch<Card>(`/cards/${code}`),
 
-  getCollectionStats: () => apiFetch<CollectionStats>('/collection/stats'),
+  getCollectionStats: (isDon?: boolean) => apiFetch<CollectionStats>(`/collection/stats${isDon ? '?isDon=true' : ''}`),
 
   getCollection: (filters: CardFilters = {}) => {
     const params = new URLSearchParams()
