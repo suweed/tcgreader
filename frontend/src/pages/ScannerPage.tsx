@@ -302,22 +302,22 @@ function enhanceContrastZone(
       }
     }
 
-    // 3. Normalización de contraste inteligente:
-    // Mantiene la polaridad original (fondo negro sigue siendo negro, blanco sigue siendo blanco)
-    // Se usa un umbral (threshold) para no amplificar el ruido del sensor (estática) en fondos oscuros.
+    // 3. Normalización de contraste inteligente (Binarización adaptativa agnóstica de polaridad):
     for (let i = 0; i < totalPixels; i++) {
-      const diff = gray[i] - bg[i]
-      let val = gray[i]
+      const pixel = gray[i]
+      const localBg = bg[i]
       
-      // Si el diferencial es mayor al ruido típico de cámara (aprox 12-15), es texto/borde. Lo amplificamos.
-      if (Math.abs(diff) > 12) {
-        val = gray[i] + diff * 3.5
+      let val = pixel
+      if (pixel < localBg - 12) {
+        // Significativamente más oscuro que el fondo local -> Texto negro
+        val = 0
+      } else if (pixel > localBg + 12) {
+        // Significativamente más claro que el fondo local -> Texto blanco
+        val = 255
       } else {
-        // Es ruido de fondo. Lo amortiguamos empujándolo hacia el promedio local.
-        val = bg[i]
+        // Es ruido de fondo. Forzamos a blanco puro o negro puro dependiendo de la luminosidad del área
+        val = localBg > 127 ? 255 : 0
       }
-
-      val = Math.max(0, Math.min(255, val))
 
       const idx = i * 4
       d[idx] = val
@@ -773,6 +773,22 @@ export default function ScannerPage() {
 
           if (found.length === 0) continue
 
+          // HÍBRIDO: Si buscamos por Nombre, y el OCR también detectó algún código, 
+          // ordenamos para evaluar primero las cartas cuyo ID coincida con ese código.
+          // Esto logra "filtrar por nombre e ID" y acelera drásticamente la evaluación visual.
+          if (!candidate.isCode) {
+            const codeCandidates = candidateList.filter((c) => c.isCode).map((c) => normalizeFoundCode(c.query).replace(/-/g, ''))
+            if (codeCandidates.length > 0) {
+              found.sort((a, b) => {
+                const aCode = a.card_code.replace(/-/g, '')
+                const bCode = b.card_code.replace(/-/g, '')
+                const aMatch = codeCandidates.some((cc) => aCode.includes(cc))
+                const bMatch = codeCandidates.some((cc) => bCode.includes(cc))
+                return aMatch === bMatch ? 0 : aMatch ? -1 : 1
+              })
+            }
+          }
+
           const codes = found.map((c) => c.card_code)
           let cacheMap: Record<string, { descriptors: string; rows: number }> = {}
           try {
@@ -987,10 +1003,14 @@ if (isDominantWinner && best) {
         return
       }
 
+      // ORDEN DE PRIORIDAD A PETICIÓN DEL USUARIO: Primero probar el Nombre, luego el Código.
+      // Es más probable que el OCR lea bien el nombre. Si el nombre falla en score, cae al código.
+      foundCandidates.sort((a, b) => (a.isCode === b.isCode ? 0 : a.isCode ? 1 : -1))
+
       setCandidates(foundCandidates)
       isScanningRef.current = false
 
-      // Procesar candidatos con fallback automático (código prioritario; si falla o no existe en BD, cae al nombre alterno)
+      // Procesar candidatos visualmente
       await searchAndMatchVisual(foundCandidates, artCanvas)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
