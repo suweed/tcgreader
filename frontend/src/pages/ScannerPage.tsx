@@ -460,6 +460,7 @@ export default function ScannerPage() {
   const [candidates, setCandidates] = useState<{ query: string; isCode: boolean }[]>([])
   const [cards, setCards] = useState<ScoredCard[]>([])
   const [selectedCard, setSelectedCard] = useState<string | null>(null)
+  const [scannedLang, setScannedLang] = useState<'en' | 'jp'>('en')
   const [batchProgress, setBatchProgress] = useState<string>('')
 
   // Datos para el panel de diagnóstico (Debug)
@@ -729,6 +730,7 @@ export default function ScannerPage() {
         // Detect if physical card is Japanese by checking if any candidate contains Japanese characters
         const isJapaneseCard = candidateList.some(c => /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/.test(c.query))
         const targetLang = isJapaneseCard ? 'jp' : 'en'
+        setScannedLang(targetLang)
 
         let bestOverallCards: (Card & { visualScore?: number; visualMatches?: number })[] = []
         let bestOverallCandidate: { query: string; isCode: boolean } | null = null
@@ -919,7 +921,7 @@ export default function ScannerPage() {
         const isDominantWinner = Boolean(best && (bestScore >= 50 || (bestScore >= 38 && margin >= 12)))
 
         const debugList = bestOverallCards.map((c, idx) => {
-          const loc = c.locales.en ?? c.locales.jp
+          const loc = targetLang === 'jp' ? (c.locales.jp ?? c.locales.en) : (c.locales.en ?? c.locales.jp)
           const s = c.visualScore ?? 0
           const passed = s >= 50 || (idx === 0 && isDominantWinner)
           return {
@@ -1375,7 +1377,7 @@ if (isDominantWinner && best) {
                 )}
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {top5Cards.map((card, idx) => {
-                    const locale = card.locales.en ?? card.locales.jp
+                    const locale = scannedLang === 'jp' ? (card.locales.jp ?? card.locales.en) : (card.locales.en ?? card.locales.jp)
                     const isTop = idx === 0 && selectedCard === card.card_code
                     return (
                       <button
@@ -1565,7 +1567,7 @@ if (isDominantWinner && best) {
       <canvas ref={analysisRef} className="hidden" aria-hidden="true" />
 
       {/* Modal directo de la carta encontrada */}
-      {selectedCard && <CardModal cardCode={selectedCard} onClose={() => setSelectedCard(null)} />}
+      {selectedCard && <CardModal cardCode={selectedCard} onClose={() => setSelectedCard(null)} initialLang={scannedLang} />}
     </div>
   )
 }
