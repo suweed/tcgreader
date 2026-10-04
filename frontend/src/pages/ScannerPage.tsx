@@ -123,6 +123,14 @@ const EFFECT_KEYWORDS = new Set([
   'JAPAN', 'EIICHIRO', 'ODA', 'SHUEISHA'
 ])
 
+// Textos impresos en las cartas DON!! ("DON!! CARD", "Your Turn +1000", "ドン!!カード").
+// Tolerante a errores de OCR en los signos "!!" (l, 1, I, |, ¡).
+const DON_TEXT_RE = /\bDON\s*[!¡lI1|]{0,3}\s*CARD\b|\bYOUR\s+TURN\b|ドン\s*[!！]*\s*カード/i
+
+function isDonText(text: string): boolean {
+  return DON_TEXT_RE.test(text)
+}
+
 function cleanOcrString(raw: string): string {
   return raw
     // Corregir prefijos comunes leídos con error por OCR (OF, OB, 0P, 0F, QP, CP -> OP)
@@ -461,6 +469,7 @@ export default function ScannerPage() {
   const [cards, setCards] = useState<ScoredCard[]>([])
   const [selectedCard, setSelectedCard] = useState<string | null>(null)
   const [scannedLang, setScannedLang] = useState<'en' | 'jp'>('en')
+  const [isDonResult, setIsDonResult] = useState(false)
   const [batchProgress, setBatchProgress] = useState<string>('')
 
   // Datos para el panel de diagnóstico (Debug)
@@ -719,16 +728,22 @@ export default function ScannerPage() {
   const searchAndMatchVisual = useCallback(
     async (
       candidatesToTry: { query: string; isCode: boolean } | { query: string; isCode: boolean }[],
-      artCanvas: HTMLCanvasElement
+      artCanvas: HTMLCanvasElement,
+      isDonScan = false
     ) => {
       setScanState('matching')
       setBatchProgress('')
+      setIsDonResult(isDonScan)
       try {
-        const candidateList = Array.isArray(candidatesToTry) ? candidatesToTry : [candidatesToTry]
+        // En modo DON!! todas las cartas se llaman igual: un único "candidato" que trae toda la categoría DON!!
+        const candidateList = isDonScan
+          ? [{ query: 'DON!! CARD', isCode: false }]
+          : Array.isArray(candidatesToTry) ? candidatesToTry : [candidatesToTry]
       setCurrentSearchQuery("")
         
         // Detect if physical card is Japanese by checking if any candidate contains Japanese characters
-        const isJapaneseCard = candidateList.some(c => /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/.test(c.query))
+        // Las DON!! solo tienen imagen en inglés, así que siempre se comparan contra EN.
+        const isJapaneseCard = !isDonScan && candidateList.some(c => /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/.test(c.query))
         const targetLang = isJapaneseCard ? 'jp' : 'en'
         setScannedLang(targetLang)
 
@@ -753,7 +768,20 @@ export default function ScannerPage() {
           setCurrentSearchQuery(candidate.query)
           let found: Card[] = []
 
-          if (candidate.isCode) {
+          if (isDonScan) {
+            try {
+              const firstRes = await api.getCards({ category: 'DON!!', limit: 100 })
+              let list = firstRes.data || []
+              for (let p = 2; p <= (firstRes.pages || 1); p++) {
+                try {
+                  const nextRes = await api.getCards({ category: 'DON!!', limit: 100, page: p })
+                  if (nextRes.data) list = list.concat(nextRes.data)
+                } catch {}
+              }
+              // Solo tiene sentido comparar visualmente las que tienen imagen
+              found = list.filter((c) => c.locales.en?.img_url || c.locales.jp?.img_url)
+            } catch (err) {}
+          } else if (candidate.isCode) {
             const clean = normalizeFoundCode(candidate.query)
             try {
               const res = await api.getCards({ q: clean, limit: 20 })
@@ -814,7 +842,7 @@ export default function ScannerPage() {
               return compareWithCachedDescriptors(cv, queryFeatures.descQuery, queryFeatures.kpSize, cached.descriptors, cached.rows)
             }
             const locale = targetLang === 'jp' ? (card.locales.jp ?? card.locales.en) : (card.locales.en ?? card.locales.jp)
-            const imgUrl = locale?.img_url ? proxyImg(locale.img_url) : null
+            const imgUrl = locale?.img_url ? proxyImg(locale.img_url, true) : null
             if (!imgUrl) return { score: 0, matches: 0 }
             try {
               const imgEl = await preloadImage(imgUrl)
@@ -936,6 +964,12 @@ export default function ScannerPage() {
         setDebugMatches(debugList)
 
 if (isDominantWinner && best) {
+          if (isDonScan) {
+            loopActiveRef.current = false
+            stopCameraTracks()
+            navigate(`/don?card=${encodeURIComponent(best.card_code)}`)
+            return
+          }
           setSelectedCard(best.card_code)
         } else {
           setSelectedCard(null)
@@ -960,7 +994,7 @@ if (isDominantWinner && best) {
         stopCameraTracks()
       }
     },
-    [stopCameraTracks]
+    [stopCameraTracks, navigate]
   )
 
   const doScan = useCallback(async () => {
@@ -1006,8 +1040,11 @@ if (isDominantWinner && best) {
         return
       }
 
+      // Si el OCR leyó textos propios de una carta DON!! ("DON!! CARD", "Your Turn"), buscamos solo en el Santuario
+      const isDonCard = isDonText(text)
+
       const { candidates: foundCandidates } = parseOcrText(text)
-      if (foundCandidates.length === 0) {
+      if (foundCandidates.length === 0 && !isDonCard) {
         setScanState('error')
         setIsCovered(true)
         isScanningRef.current = false
@@ -1023,7 +1060,7 @@ if (isDominantWinner && best) {
       isScanningRef.current = false
 
       // Procesar candidatos visualmente
-      await searchAndMatchVisual(foundCandidates, artCanvas)
+      await searchAndMatchVisual(foundCandidates, artCanvas, isDonCard)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       setDebugError(msg)
@@ -1120,6 +1157,7 @@ if (isDominantWinner && best) {
 
   const handleScanAgain = useCallback(() => {
     setSelectedCard(null)
+    setIsDonResult(false)
     setCards([])
     setCandidates([])
     setDetectedText('')
@@ -1348,11 +1386,11 @@ if (isDominantWinner && best) {
                   <p className="text-white font-mono font-bold text-base">{detectedText}</p>
                 </div>
                 <Link
-                  to={`/?q=${encodeURIComponent(detectedQuery)}`}
+                  to={isDonResult ? '/don' : `/?q=${encodeURIComponent(detectedQuery)}`}
                   className="text-xs bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-semibold px-3.5 py-2 rounded-lg transition-colors flex items-center gap-1.5 shadow"
                 >
-                  <span>📖</span>
-                  <span>Ver en álbum</span>
+                  <span>{isDonResult ? '🃏' : '📖'}</span>
+                  <span>{isDonResult ? 'Ver en Santuario' : 'Ver en álbum'}</span>
                 </Link>
               </div>
             )}
@@ -1382,7 +1420,11 @@ if (isDominantWinner && best) {
                     return (
                       <button
                         key={card.card_code}
-                        onClick={() => setSelectedCard(card.card_code)}
+                        onClick={() =>
+                          isDonResult
+                            ? navigate(`/don?card=${encodeURIComponent(card.card_code)}`)
+                            : setSelectedCard(card.card_code)
+                        }
                         className={`relative rounded-xl p-2 text-left transition-all ${
                           isTop
                             ? 'bg-slate-800 ring-2 ring-purple-500 shadow-lg shadow-purple-900/30 hover:bg-slate-700'
@@ -1434,7 +1476,7 @@ if (isDominantWinner && best) {
                     .map((c, i) => (
                     <button
                       key={i}
-                      onClick={() => navigate('/search?q=' + encodeURIComponent(c.query))}
+                      onClick={() => navigate(isDonText(c.query) ? '/don' : '/?q=' + encodeURIComponent(c.query))}
                       className="text-xs px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-slate-300 rounded-lg border border-slate-700 flex items-center gap-1.5 transition-colors"
                     >
                       {c.isCode ? (

@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import type { CollectionStats } from '../types'
 import CardGrid from '../components/CardGrid'
 
 export default function AlbumPage() {
   const [stats, setStats] = useState<CollectionStats | null>(null)
+  const [searchParams] = useSearchParams()
+  const initialQ = searchParams.get('q') || ''
 
   useEffect(() => {
     api.getCollectionStats().then(setStats)
@@ -23,7 +26,7 @@ export default function AlbumPage() {
         </div>
       )}
 
-      <CardGrid />
+      <CardGrid key={initialQ} initialQ={initialQ || undefined} />
     </div>
   )
 }

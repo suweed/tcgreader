@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import CardGrid from '../components/CardGrid'
+import CardModal from '../components/CardModal'
 import { api } from '../api'
 import type { CollectionStats } from '../types'
 import { useSettings } from '../context/SettingsContext'
@@ -21,10 +23,21 @@ export default function DonPage() {
   const [stats, setStats] = useState<CollectionStats | null>(null)
   const [showUsd, setShowUsd] = useState(false)
   const { usdToMxn } = useSettings()
+  const [searchParams, setSearchParams] = useSearchParams()
+  // Carta DON!! que viene del escáner (?card=DON_132) → se abre directamente en el modal
+  const scannedCard = searchParams.get('card')
+
+  const loadStats = () => api.getCollectionStats(true).then(setStats)
 
   useEffect(() => {
-    api.getCollectionStats(true).then(setStats)
+    loadStats()
   }, [])
+
+  const closeScannedCard = () => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('card')
+    setSearchParams(next, { replace: true })
+  }
 
   const totalMxn = stats?.total_value_usd != null ? (stats.total_value_usd * usdToMxn).toFixed(2) : null
 
@@ -62,6 +75,10 @@ export default function DonPage() {
 
       {/* Reutilizamos el CardGrid pasándole el forceCategory para ocultar la barra y forzar la búsqueda */}
       <CardGrid forceCategory="DON!!" />
+
+      {scannedCard && (
+        <CardModal cardCode={scannedCard} onClose={closeScannedCard} onCollectionChange={loadStats} initialLang="en" />
+      )}
     </div>
   )
 }
