@@ -22,15 +22,15 @@ type DragHandle =
 export default function ImageCropperModal({ isOpen, imageUrl, onClose, onApplyCrop }: Props) {
   // Rectángulo de recorte en porcentajes (0 a 100%)
   const [crop, setCrop] = useState<{ x: number; y: number; w: number; h: number }>({
-    x: 2,
-    y: 2,
-    w: 96,
-    h: 96,
+    x: 3,
+    y: 3,
+    w: 94,
+    h: 94,
   })
 
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null)
   const imageRef = useRef<HTMLImageElement | null>(null)
-  const previewCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
 
   const dragRef = useRef<{
@@ -43,7 +43,7 @@ export default function ImageCropperModal({ isOpen, imageUrl, onClose, onApplyCr
   // Cargar dimensiones naturales de la imagen al abrir
   useEffect(() => {
     if (!isOpen || !imageUrl) return
-    setCrop({ x: 2, y: 2, w: 96, h: 96 })
+    setCrop({ x: 3, y: 3, w: 94, h: 94 })
 
     const img = new Image()
     img.src = imageUrl
@@ -53,11 +53,11 @@ export default function ImageCropperModal({ isOpen, imageUrl, onClose, onApplyCr
     }
   }, [isOpen, imageUrl])
 
-  // Actualizar canvas de previsualización en tiempo real
-  const updatePreview = useCallback(() => {
+  // Generar recorte en canvas offscreen
+  const renderCroppedCanvas = useCallback(() => {
     const img = imageRef.current
-    const canvas = previewCanvasRef.current
-    if (!img || !canvas || !imageSize) return
+    const canvas = offscreenCanvasRef.current
+    if (!img || !canvas || !imageSize) return null
 
     const { width: origW, height: origH } = imageSize
 
@@ -66,22 +66,20 @@ export default function ImageCropperModal({ isOpen, imageUrl, onClose, onApplyCr
     const cropW = Math.max(10, Math.round((crop.w / 100) * origW))
     const cropH = Math.max(10, Math.round((crop.h / 100) * origH))
 
-    // Dimensiones estandarizadas de cartas One Piece (ratio ~63:88)
+    // Dimensiones estandarizadas de cartas One Piece (ratio 63:88)
     canvas.width = 300
     canvas.height = 419
 
     const ctx = canvas.getContext('2d')
-    if (!ctx) return
+    if (!ctx) return null
 
     ctx.imageSmoothingEnabled = true
     ctx.imageSmoothingQuality = 'high'
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, canvas.width, canvas.height)
-  }, [crop, imageSize])
 
-  useEffect(() => {
-    updatePreview()
-  }, [updatePreview])
+    return canvas
+  }, [crop, imageSize])
 
   if (!isOpen || !imageUrl) return null
 
@@ -107,8 +105,8 @@ export default function ImageCropperModal({ isOpen, imageUrl, onClose, onApplyCr
 
     const dx = ((e.clientX - startX) / rect.width) * 100
     const dy = ((e.clientY - startY) / rect.height) * 100
-    const minW = 12
-    const minH = 12
+    const minW = 10
+    const minH = 10
 
     setCrop(() => {
       let { x, y, w, h } = initialCrop
@@ -153,7 +151,7 @@ export default function ImageCropperModal({ isOpen, imageUrl, onClose, onApplyCr
   }
 
   const handleApply = () => {
-    const canvas = previewCanvasRef.current
+    const canvas = renderCroppedCanvas()
     if (!canvas) return
     const croppedDataUrl = canvas.toDataURL('image/jpeg', 0.95)
     onApplyCrop(croppedDataUrl)
@@ -165,162 +163,157 @@ export default function ImageCropperModal({ isOpen, imageUrl, onClose, onApplyCr
   }
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/85 backdrop-blur-md p-3 sm:p-4">
-      <div className="min-h-full flex items-start sm:items-center justify-center py-4 sm:py-8">
-        <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
-          {/* Cabecera */}
-          <div className="flex items-center justify-between px-5 py-3.5 bg-slate-800/90 border-b border-slate-700">
-            <div className="flex items-center gap-2">
-              <span className="text-lg">✂️</span>
-              <h3 className="text-base font-bold text-white">Recortar y Centrar Carta</h3>
-            </div>
-            <button
-              onClick={onClose}
-              className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-700 transition-colors"
-            >
-              ✕
-            </button>
-          </div>
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/90 backdrop-blur-md p-3 sm:p-4">
+      <div className="min-h-full flex items-start sm:items-center justify-center py-3 sm:py-6">
+        <div className="relative w-full max-w-lg bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
+          {/* Botón flotante para cerrar */}
+          <button
+            onClick={onClose}
+            aria-label="Cerrar"
+            className="absolute top-3 right-3 z-30 w-8 h-8 rounded-full bg-slate-800/90 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition-colors border border-slate-700 shadow"
+          >
+            ✕
+          </button>
 
-          {/* Contenido interactivo */}
-          <div className="p-4 sm:p-5 space-y-4">
-            <p className="text-xs text-slate-300">
-              Arrastra directamente los <strong className="text-green-400">bordes verdes</strong> o las <strong className="text-white">esquinas</strong> con tu dedo para recortar bordes de la mesa o desalineaciones:
+          {/* Contenido interactivo: UNA SOLA IMAGEN GRANDE */}
+          <div className="p-4 sm:p-5 space-y-3 text-center">
+            <p className="text-xs text-slate-300 pr-8 text-left">
+              Arrastra directamente las <strong className="text-green-400">líneas verdes</strong> para recortar la carta. Lo que quede fuera se oscurecerá:
             </p>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
-              {/* Área interactiva con arrastre táctil / mouse */}
-              <div className="text-center">
-                <p className="text-[11px] font-semibold text-slate-400 mb-2">Arrastra los bordes de la carta</p>
+            {/* Imagen única grande con máscara de recorte y arrastre interactivo */}
+            <div className="flex justify-center items-center py-1">
+              <div
+                ref={containerRef}
+                className="relative inline-block border border-slate-700 rounded-lg overflow-hidden bg-black shadow-2xl select-none mx-auto"
+                style={{ touchAction: 'none', maxWidth: '100%' }}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerCancel={handlePointerUp}
+              >
+                {/* Imagen base nítida */}
+                <img
+                  src={imageUrl}
+                  alt="Carta para recortar"
+                  className="max-h-[62vh] sm:max-h-[68vh] w-auto object-contain block pointer-events-none"
+                  draggable={false}
+                />
+
+                {/* 4 Capas oscuras que oscurecen la parte que quedará cortada */}
+                {/* Arriba */}
                 <div
-                  ref={containerRef}
-                  className="relative inline-block border border-slate-700 rounded-lg overflow-hidden bg-black shadow-lg select-none"
-                  style={{ touchAction: 'none', maxWidth: '100%' }}
-                  onPointerMove={handlePointerMove}
-                  onPointerUp={handlePointerUp}
-                  onPointerCancel={handlePointerUp}
+                  className="absolute bg-black/75 backdrop-blur-[0.5px] pointer-events-none transition-all duration-75"
+                  style={{ top: 0, left: 0, right: 0, height: `${crop.y}%` }}
+                />
+                {/* Abajo */}
+                <div
+                  className="absolute bg-black/75 backdrop-blur-[0.5px] pointer-events-none transition-all duration-75"
+                  style={{ bottom: 0, left: 0, right: 0, height: `${Math.max(0, 100 - crop.y - crop.h)}%` }}
+                />
+                {/* Izquierda */}
+                <div
+                  className="absolute bg-black/75 backdrop-blur-[0.5px] pointer-events-none transition-all duration-75"
+                  style={{
+                    top: `${crop.y}%`,
+                    bottom: `${Math.max(0, 100 - crop.y - crop.h)}%`,
+                    left: 0,
+                    width: `${crop.x}%`,
+                  }}
+                />
+                {/* Derecha */}
+                <div
+                  className="absolute bg-black/75 backdrop-blur-[0.5px] pointer-events-none transition-all duration-75"
+                  style={{
+                    top: `${crop.y}%`,
+                    bottom: `${Math.max(0, 100 - crop.y - crop.h)}%`,
+                    right: 0,
+                    width: `${Math.max(0, 100 - crop.x - crop.w)}%`,
+                  }}
+                />
+
+                {/* Recuadro de recorte arrastrable con líneas verdes */}
+                <div
+                  className="absolute border-2 border-green-400 shadow-xl"
+                  style={{
+                    left: `${crop.x}%`,
+                    top: `${crop.y}%`,
+                    width: `${crop.w}%`,
+                    height: `${crop.h}%`,
+                    touchAction: 'none',
+                  }}
                 >
-                  {/* Imagen base */}
-                  <img
-                    src={imageUrl}
-                    alt="Original para recortar"
-                    className="max-h-64 sm:max-h-80 w-auto object-contain block opacity-40 pointer-events-none"
-                    draggable={false}
-                  />
-
-                  {/* Sombras oscuras alrededor del área de recorte */}
+                  {/* Área central para arrastrar y mover el recuadro completo */}
                   <div
-                    className="absolute bg-black/60 pointer-events-none"
-                    style={{ top: 0, left: 0, right: 0, height: `${crop.y}%` }}
-                  />
-                  <div
-                    className="absolute bg-black/60 pointer-events-none"
-                    style={{ bottom: 0, left: 0, right: 0, height: `${Math.max(0, 100 - crop.y - crop.h)}%` }}
-                  />
-                  <div
-                    className="absolute bg-black/60 pointer-events-none"
-                    style={{ top: `${crop.y}%`, bottom: `${Math.max(0, 100 - crop.y - crop.h)}%`, left: 0, width: `${crop.x}%` }}
-                  />
-                  <div
-                    className="absolute bg-black/60 pointer-events-none"
-                    style={{ top: `${crop.y}%`, bottom: `${Math.max(0, 100 - crop.y - crop.h)}%`, right: 0, width: `${Math.max(0, 100 - crop.x - crop.w)}%` }}
-                  />
-
-                  {/* Recuadro de recorte arrastrable */}
-                  <div
-                    className="absolute border-2 border-green-400 shadow-md"
-                    style={{
-                      left: `${crop.x}%`,
-                      top: `${crop.y}%`,
-                      width: `${crop.w}%`,
-                      height: `${crop.h}%`,
-                      touchAction: 'none',
-                    }}
+                    onPointerDown={(e) => handlePointerDown('move', e)}
+                    className="absolute inset-0 cursor-move bg-green-500/5 flex items-center justify-center"
                   >
-                    {/* Área central para mover el recuadro completo */}
-                    <div
-                      onPointerDown={(e) => handlePointerDown('move', e)}
-                      className="absolute inset-0 cursor-move bg-green-500/10 flex items-center justify-center"
-                    >
-                      <span className="text-[10px] text-green-200 bg-slate-950/70 px-1.5 py-0.5 rounded pointer-events-none select-none">
-                        Arrastra para mover
-                      </span>
-                    </div>
-
-                    {/* Borde Superior */}
-                    <div
-                      onPointerDown={(e) => handlePointerDown('top', e)}
-                      className="absolute -top-3 left-4 right-4 h-6 cursor-ns-resize flex items-center justify-center z-10"
-                    >
-                      <div className="w-8 h-1 bg-green-400 rounded-full shadow" />
-                    </div>
-
-                    {/* Borde Inferior */}
-                    <div
-                      onPointerDown={(e) => handlePointerDown('bottom', e)}
-                      className="absolute -bottom-3 left-4 right-4 h-6 cursor-ns-resize flex items-center justify-center z-10"
-                    >
-                      <div className="w-8 h-1 bg-green-400 rounded-full shadow" />
-                    </div>
-
-                    {/* Borde Izquierdo */}
-                    <div
-                      onPointerDown={(e) => handlePointerDown('left', e)}
-                      className="absolute -left-3 top-4 bottom-4 w-6 cursor-ew-resize flex items-center justify-center z-10"
-                    >
-                      <div className="w-1 h-8 bg-green-400 rounded-full shadow" />
-                    </div>
-
-                    {/* Borde Derecho */}
-                    <div
-                      onPointerDown={(e) => handlePointerDown('right', e)}
-                      className="absolute -right-3 top-4 bottom-4 w-6 cursor-ew-resize flex items-center justify-center z-10"
-                    >
-                      <div className="w-1 h-8 bg-green-400 rounded-full shadow" />
-                    </div>
-
-                    {/* 4 Esquinas táctiles ampliadas para dedos móviles */}
-                    <div
-                      onPointerDown={(e) => handlePointerDown('top-left', e)}
-                      className="absolute -top-3 -left-3 w-6 h-6 bg-white border-2 border-green-500 rounded-full cursor-nwse-resize shadow-lg z-20"
-                    />
-                    <div
-                      onPointerDown={(e) => handlePointerDown('top-right', e)}
-                      className="absolute -top-3 -right-3 w-6 h-6 bg-white border-2 border-green-500 rounded-full cursor-nesw-resize shadow-lg z-20"
-                    />
-                    <div
-                      onPointerDown={(e) => handlePointerDown('bottom-left', e)}
-                      className="absolute -bottom-3 -left-3 w-6 h-6 bg-white border-2 border-green-500 rounded-full cursor-nesw-resize shadow-lg z-20"
-                    />
-                    <div
-                      onPointerDown={(e) => handlePointerDown('bottom-right', e)}
-                      className="absolute -bottom-3 -right-3 w-6 h-6 bg-white border-2 border-green-500 rounded-full cursor-nwse-resize shadow-lg z-20"
-                    />
+                    <span className="text-[10px] text-green-200 bg-slate-950/80 px-2 py-0.5 rounded shadow pointer-events-none select-none font-medium">
+                      Arrastrar carta
+                    </span>
                   </div>
-                </div>
-              </div>
 
-              {/* Resultado Final en vivo (Canvas 300 × 419) */}
-              <div className="text-center">
-                <p className="text-[11px] font-semibold text-slate-400 mb-2">Vista final de la carta</p>
-                <div className="inline-block border border-slate-700 rounded-lg overflow-hidden bg-black shadow-lg">
-                  <canvas
-                    ref={previewCanvasRef}
-                    className="w-36 sm:w-44 h-auto block mx-auto object-contain"
+                  {/* Borde Superior */}
+                  <div
+                    onPointerDown={(e) => handlePointerDown('top', e)}
+                    className="absolute -top-3.5 left-4 right-4 h-7 cursor-ns-resize flex items-center justify-center z-10"
+                  >
+                    <div className="w-10 h-1.5 bg-green-400 rounded-full shadow-md" />
+                  </div>
+
+                  {/* Borde Inferior */}
+                  <div
+                    onPointerDown={(e) => handlePointerDown('bottom', e)}
+                    className="absolute -bottom-3.5 left-4 right-4 h-7 cursor-ns-resize flex items-center justify-center z-10"
+                  >
+                    <div className="w-10 h-1.5 bg-green-400 rounded-full shadow-md" />
+                  </div>
+
+                  {/* Borde Izquierdo */}
+                  <div
+                    onPointerDown={(e) => handlePointerDown('left', e)}
+                    className="absolute -left-3.5 top-4 bottom-4 w-7 cursor-ew-resize flex items-center justify-center z-10"
+                  >
+                    <div className="w-1.5 h-10 bg-green-400 rounded-full shadow-md" />
+                  </div>
+
+                  {/* Borde Derecho */}
+                  <div
+                    onPointerDown={(e) => handlePointerDown('right', e)}
+                    className="absolute -right-3.5 top-4 bottom-4 w-7 cursor-ew-resize flex items-center justify-center z-10"
+                  >
+                    <div className="w-1.5 h-10 bg-green-400 rounded-full shadow-md" />
+                  </div>
+
+                  {/* 4 Esquinas táctiles ampliadas para dedos móviles */}
+                  <div
+                    onPointerDown={(e) => handlePointerDown('top-left', e)}
+                    className="absolute -top-3.5 -left-3.5 w-7 h-7 bg-white border-2 border-green-500 rounded-full cursor-nwse-resize shadow-xl z-20"
+                  />
+                  <div
+                    onPointerDown={(e) => handlePointerDown('top-right', e)}
+                    className="absolute -top-3.5 -right-3.5 w-7 h-7 bg-white border-2 border-green-500 rounded-full cursor-nesw-resize shadow-xl z-20"
+                  />
+                  <div
+                    onPointerDown={(e) => handlePointerDown('bottom-left', e)}
+                    className="absolute -bottom-3.5 -left-3.5 w-7 h-7 bg-white border-2 border-green-500 rounded-full cursor-nesw-resize shadow-xl z-20"
+                  />
+                  <div
+                    onPointerDown={(e) => handlePointerDown('bottom-right', e)}
+                    className="absolute -bottom-3.5 -right-3.5 w-7 h-7 bg-white border-2 border-green-500 rounded-full cursor-nwse-resize shadow-xl z-20"
                   />
                 </div>
-                <p className="text-[10px] text-slate-500 mt-2">
-                  Se ajusta automáticamente al formato físico oficial (63 × 88 mm)
-                </p>
               </div>
             </div>
+
+            {/* Canvas oculto para renderizar el resultado recortado */}
+            <canvas ref={offscreenCanvasRef} className="hidden" aria-hidden="true" />
 
             {/* Botones de acción del cropper */}
             <div className="flex items-center justify-between pt-3 border-t border-slate-800">
               <button
                 type="button"
                 onClick={handleReset}
-                className="text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded hover:bg-slate-800 transition-colors flex items-center gap-1"
+                className="text-xs text-slate-400 hover:text-white px-3 py-2 rounded-lg hover:bg-slate-800 transition-colors flex items-center gap-1"
               >
                 <span>↺</span>
                 <span>Restablecer</span>
@@ -337,10 +330,10 @@ export default function ImageCropperModal({ isOpen, imageUrl, onClose, onApplyCr
                 <button
                   type="button"
                   onClick={handleApply}
-                  className="px-5 py-2 bg-green-600 hover:bg-green-500 active:bg-green-700 text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center gap-1.5"
+                  className="px-5 py-2.5 bg-green-600 hover:bg-green-500 active:bg-green-700 text-white text-xs font-bold rounded-xl shadow-lg shadow-green-900/30 transition-all flex items-center gap-1.5"
                 >
                   <span>✓</span>
-                  <span>Aplicar recorte</span>
+                  <span>Guardar recorte</span>
                 </button>
               </div>
             </div>

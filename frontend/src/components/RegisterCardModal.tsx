@@ -167,19 +167,15 @@ export default function RegisterCardModal({
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/80 backdrop-blur-sm p-3 sm:p-4">
       <div className="min-h-full flex items-start sm:items-center justify-center py-4 sm:py-8">
         <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
-          {/* Cabecera */}
-          <div className="flex items-center justify-between px-5 py-4 bg-slate-800/90 border-b border-slate-700">
-            <div className="flex items-center gap-2">
-              <span className="text-xl">✨</span>
-              <h2 className="text-lg font-bold text-white">Registrar Tarjeta Alterna / Custom</h2>
-            </div>
-            <button
-              onClick={onClose}
-              className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-700 transition-colors"
-            >
-              ✕
-            </button>
-          </div>
+          {/* Botón flotante para cerrar sin cabecera de texto */}
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Cerrar"
+            className="absolute top-3 right-3 z-20 w-8 h-8 rounded-full bg-slate-800/90 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition-colors border border-slate-700 shadow"
+          >
+            ✕
+          </button>
 
           {/* Formulario */}
           <form onSubmit={handleSubmit} className="p-5 space-y-4">
@@ -189,10 +185,9 @@ export default function RegisterCardModal({
               </div>
             )}
 
-            <div className="flex flex-col sm:flex-row gap-5 items-start">
+            <div className="flex flex-col sm:flex-row gap-5 items-start pt-2">
               {/* Foto tomada por el escáner (30% más grande con botón de recorte flotante sobre la imagen) */}
               <div className="w-full sm:w-64 shrink-0 text-center">
-                <p className="text-[11px] font-semibold text-slate-400 mb-2">Foto de la Carta</p>
                 {displayImage ? (
                   <div className="relative inline-block mx-auto">
                     <img
